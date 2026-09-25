@@ -19,7 +19,13 @@ from zero_defect.serving.api import create_app
 def client(tmp_path_factory):
     from zero_defect.simulation.checker import fresh_settings
 
-    app = create_app(fresh_settings(tmp_path_factory.mktemp("api")), adapters={}, load_demo=True)
+    app = create_app(
+        fresh_settings(tmp_path_factory.mktemp("api")),
+        adapters={},
+        load_demo=True,
+        autostart=False,
+        history_sets=10,
+    )
     with TestClient(app) as test_client:
         test_client.app = app
         yield test_client

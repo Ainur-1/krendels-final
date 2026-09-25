@@ -25,7 +25,7 @@ def render() -> str:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         settings = load_settings(
-            storage_path=root / "ledger.sqlite3",
+            storage_url=f"sqlite:///{root / 'ledger.sqlite3'}",
             keys_dir=root / "keys",
             integrations=(),
             adapters={},

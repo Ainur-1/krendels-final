@@ -26,6 +26,9 @@ from zero_defect.service import QualitySystem, State
 
 MEDIA_DIR = DATA_DIR / "media"
 
+# Порядок тяжести для очереди контролёра: сначала критичные.
+SEVERITY = {"critical": 0, "major": 1, "minor": 2}
+
 STATION_TITLES = {
     "ST-INC": "Входной контроль",
     "ST-MILL": "Механообработка",

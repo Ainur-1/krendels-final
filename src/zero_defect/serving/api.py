@@ -15,6 +15,7 @@ HTTP-сервис: API ядра и интерфейс.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,19 +26,27 @@ from pydantic import BaseModel
 
 from zero_defect import __version__
 from zero_defect.analysis import ocel
-from zero_defect.config import DATA_DIR, SCHEMAS_DIR, STATIC_DIR, Settings, load_settings
+from zero_defect.config import SCHEMAS_DIR, STATIC_DIR, Settings, load_settings
 from zero_defect.integration.hub import IntegrationHub, Outbox
 from zero_defect.integration.model import ExternalSystem
 from zero_defect.integration.registry import build_adapters
 from zero_defect.ledger.crypto import PROFILES
+from zero_defect.lines.emulator import LiveEmulator
+from zero_defect.lines.store import LineStore
 from zero_defect.security.auth import PERMISSIONS, AuthError, Principal, issue_token
 from zero_defect.service import DecisionError, QualitySystem
-from zero_defect.serving import payloads
-from zero_defect.simulation.replay import load_steps, replay
+from zero_defect.serving import lines_routes, payloads
+from zero_defect.simulation.demo import demo_steps
+from zero_defect.simulation.replay import replay
 
 
 class LoginRequest(BaseModel):
     user_id: str
+
+
+class PasswordLogin(BaseModel):
+    user_id: str
+    password: str
 
 
 class DecisionRequest(BaseModel):
@@ -54,28 +63,44 @@ def create_app(
     settings: Settings | None = None,
     adapters: dict[str, ExternalSystem] | None = None,
     load_demo: bool | None = None,
+    history_sets: int | None = None,
+    autostart: bool = True,
 ) -> FastAPI:
     settings = settings or load_settings()
     system = QualitySystem(settings)
-    outbox = Outbox(settings.storage_path.with_name("integration.sqlite3"))
+    outbox = Outbox(system.database)
     hub = IntegrationHub(
         system, adapters if adapters is not None else build_adapters(settings), outbox
     )
-    demo_path = DATA_DIR / "demo" / "input.jsonl"
-    if (load_demo if load_demo is not None else settings.demo) and not system.ingest_summary()[
-        "accepted"
-    ]:
-        # Демонстрационный набор проигрывается один раз, в пустой журнал. Повторный
-        # запуск его не дублирует: журнал уже не пуст.
-        replay(system, load_steps(demo_path))
+    lines = LineStore(system.database)
+    demo = load_demo if load_demo is not None else settings.demo
+    if demo and not system.ingest_summary()["accepted"]:
+        # Демонстрационная база наполняется один раз, в пустой журнал: проверочные
+        # ситуации и история линий за прошедшие смены, порождённая эмулятором из
+        # зерна. Повторный запуск её не дублирует — журнал уже не пуст.
+        replay(system, demo_steps(lines.all(), history_sets))
+    emulator = LiveEmulator(lambda messages: system.ingest(messages), lines.get)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        # В демонстрационном режиме линии сразу работают: при открытии интерфейса по графу
+        # уже идут изделия. Вне демонстрации эмуляцию запускает человек с правом emulate.
+        if demo and autostart:
+            for config in lines.all():
+                emulator.start(config.line_id)
+        yield
+        emulator.shutdown()
 
     app = FastAPI(
+        lifespan=lifespan,
         title="Zero Defect",
         version=__version__,
         description="Прослеживаемость изделия и разбор несоответствий на закрытом производстве.",
     )
     app.state.system = system
     app.state.hub = hub
+    app.state.lines = lines
+    app.state.emulator = emulator
 
     @app.exception_handler(AuthError)
     def auth_error(_: Request, error: AuthError) -> JSONResponse:
@@ -110,6 +135,40 @@ def create_app(
             raise HTTPException(404, "вход без токена доступен только в демонстрационном режиме")
         user = system.security.user(request.user_id)
         system.audit("login", user, {"mode": "demo"})
+        return {
+            "token": issue_token(system.keyring, user, settings.token_ttl_s),
+            "user": user.__dict__,
+        }
+
+    @app.get("/api/auth/options")
+    def auth_options() -> dict:
+        """Что показать на экране входа: в демонстрационном режиме — карточки ролей."""
+
+        users = []
+        if settings.demo:
+            users = [
+                {
+                    "user_id": user.user_id,
+                    "name": user.name,
+                    "role": user.role,
+                    "has_password": system.users.has_password(user.user_id),
+                }
+                for user in system.security.users.values()
+            ]
+        return {"demo": settings.demo, "users": users}
+
+    @app.post("/api/auth/login")
+    def password_login(request: PasswordLogin) -> dict:
+        try:
+            user = system.security.login(request.user_id, request.password)
+        except AuthError:
+            system.audit(
+                "denied",
+                Principal(request.user_id, "unknown", request.user_id),
+                {"action": "login"},
+            )
+            raise
+        system.audit("login", user, {"mode": "password"})
         return {
             "token": issue_token(system.keyring, user, settings.token_ttl_s),
             "user": user.__dict__,
@@ -180,12 +239,15 @@ def create_app(
         return view
 
     @app.get("/api/nonconformances")
-    def nonconformances(status: str | None = None, _: Principal = Depends(reader)) -> list[dict]:
+    def nonconformances(
+        status: str | None = None, line_id: str | None = None, _: Principal = Depends(reader)
+    ) -> list[dict]:
         cards = system.state().cards.values()
         return [
             payloads.nc_summary(card)
             for card in sorted(cards, key=lambda card: card.first_detected_at, reverse=True)
-            if status is None or card.status == status
+            if (status is None or card.status == status)
+            and (line_id is None or card.first_signal.observation.event.line_id == line_id)
         ]
 
     @app.get("/api/nonconformances/{nc_id}")
@@ -229,6 +291,19 @@ def create_app(
     def audit(user: Principal = Depends(principal)) -> list[dict]:
         system.security.authorize(user, "admin", "audit_read")
         return list(reversed(system.critical_actions))
+
+    @app.get("/api/admin/users")
+    def admin_users(user: Principal = Depends(principal)) -> list[dict]:
+        system.security.authorize(user, "admin", "users_read")
+        return [
+            {
+                "user_id": u.user_id,
+                "name": u.name,
+                "role": u.role,
+                "has_password": system.users.has_password(u.user_id),
+            }
+            for u in system.security.users.values()
+        ]
 
     @app.get("/api/keys")
     def keys(user: Principal = Depends(principal)) -> dict:
@@ -300,6 +375,8 @@ def create_app(
     @app.get("/api/ops/metrics")
     def ops_metrics(_: Principal = Depends(reader)) -> dict:
         return system.telemetry.snapshot()
+
+    lines_routes.register(app, system, lines, emulator, principal, reader)
 
     # --- интерфейс ------------------------------------------------------------------
 
