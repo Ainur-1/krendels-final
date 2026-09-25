@@ -1,16 +1,37 @@
-# Сервис и эмулятор внешней системы на одной машине. Эмулятор — тот же образ с другой
-# командой: отдельный процесс нужен, чтобы обмен шёл по сети, как с настоящей MES.
+# Сервис, его база PostgreSQL и эмулятор внешней системы. Эмулятор — тот же образ с
+# другой командой: отдельный процесс нужен, чтобы обмен шёл по сети, как с настоящей MES.
+#
+# Пароль базы берётся из .env (в репозиторий не попадает):
+#   ZD_DB_PASSWORD=<пароль>
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: zero_defect
+      POSTGRES_USER: zd
+      POSTGRES_PASSWORD: ${ZD_DB_PASSWORD:?задайте ZD_DB_PASSWORD в файле .env}
+    volumes:
+      - zd-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zd -d zero_defect"]
+      interval: 5s
+      retries: 10
+
   app:
     build: .
     ports:
       - "8000:8000"
     environment:
+      ZD_STORAGE_URL: postgresql+psycopg://zd:${ZD_DB_PASSWORD}@db:5432/zero_defect
       ZD_MES_EMULATOR_BASE_URL: http://emulator:8100
     volumes:
-      - zd-state:/app/var
+      # Ключи и якорь журнала — отдельно от базы: копия базы без ключей бесполезна.
+      - zd-keys:/app/var
     depends_on:
-      - emulator
+      db:
+        condition: service_healthy
+      emulator:
+        condition: service_started
 
   emulator:
     build: .
@@ -19,4 +40,5 @@ services:
       - "8100:8100"
 
 volumes:
-  zd-state:
+  zd-db:
+  zd-keys:

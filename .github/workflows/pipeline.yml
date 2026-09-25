@@ -25,11 +25,24 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
 
+    # Настоящий PostgreSQL для тестов журнала и сценариев на обеих СУБД.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+
     # Для каждого вызова uv в этой задаче. Иначе голый `uv run` прочитает
     # .python-version, пересоберёт окружение другим интерпретатором, и ветка матрицы
     # молча перестанет проверять ту версию, в честь которой названа.
     env:
       UV_PYTHON: ${{ matrix.python-version }}
+      # Пароль известен только одноразовой базе задачи CI и больше нигде не действует.
+      ZD_TEST_POSTGRES_URL: postgresql+psycopg://postgres:ci-only@localhost:5432/postgres
 
     steps:
       - uses: actions/checkout@v4
