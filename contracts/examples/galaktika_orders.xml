@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ProductionOrders version="1">
+  <ProductionOrder number="ПЗ-77" nrec="0x8002000000000B01" product="UNIT-U1" line="L1" due="2026-09-28">
+    <Unit serial="U-GAL-0001" code="UNIT-U1" origin="manufactured"/>
+    <Unit serial="B-GAL-0001" code="BODY-K1" origin="manufactured" parent="U-GAL-0001"/>
+    <Unit serial="F-GAL-0001" code="FLANGE-F2" origin="purchased" parent="U-GAL-0001"/>
+  </ProductionOrder>
+</ProductionOrders>

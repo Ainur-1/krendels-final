@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NomenclatureList version="1">
+  <Nomenclature code="UNIT-U1" name="Узел крепления в сборе" nrec="0x8001000000000A01"/>
+  <Nomenclature code="BODY-K1" name="Корпус" nrec="0x8001000000000A02"/>
+  <Nomenclature code="FLANGE-F2" name="Фланец" nrec="0x8001000000000A03"/>
+</NomenclatureList>

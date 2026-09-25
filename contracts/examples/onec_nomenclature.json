@@ -1,0 +1,8 @@
+{
+  "odata.metadata": "http://erp.local/base/odata/standard.odata/$metadata#Catalog_Номенклатура",
+  "value": [
+    {"Ref_Key": "5f1c8a2e-0b8e-11ef-9a41-00155d010a01", "Code": "UNIT-U1  ", "Description": "Узел крепления в сборе"},
+    {"Ref_Key": "5f1c8a2f-0b8e-11ef-9a41-00155d010a01", "Code": "BODY-K1", "Description": "Корпус"},
+    {"Ref_Key": "5f1c8a30-0b8e-11ef-9a41-00155d010a01", "Code": "FLANGE-F2", "Description": "Фланец"}
+  ]
+}

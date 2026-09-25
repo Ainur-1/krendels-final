@@ -1,0 +1,109 @@
+{
+  "description": "Полный цикл обмена с эмулятором MES: задание на вход, итог контроля на выход, подтверждение и ошибка. Форматы — эмулятора, внутренняя модель в integration/model.py.",
+  "inbound_work_order": {
+    "orderNo": "WO-9001",
+    "line": "L1",
+    "due": "2026-09-27",
+    "product": {
+      "code": "UNIT-U1"
+    },
+    "serials": [
+      {
+        "serial": "U-9001",
+        "code": "UNIT-U1",
+        "bom": [
+          {
+            "serial": "B-9001",
+            "code": "BODY-K1",
+            "source": "make"
+          },
+          {
+            "serial": "F-9001",
+            "code": "FLANGE-F2",
+            "source": "buy"
+          }
+        ]
+      }
+    ]
+  },
+  "internal_events_created": [
+    {
+      "event_id": "int-mes_emulator-WO-9001-U-9001",
+      "event_type": "item_registered",
+      "item_id": "U-9001",
+      "item_type_id": "UNIT-U1",
+      "work_order_id": "WO-9001",
+      "origin": "manufactured"
+    },
+    {
+      "event_id": "int-mes_emulator-WO-9001-B-9001",
+      "event_type": "item_registered",
+      "item_id": "B-9001",
+      "item_type_id": "BODY-K1",
+      "work_order_id": "WO-9001",
+      "origin": "manufactured"
+    },
+    {
+      "event_id": "int-mes_emulator-WO-9001-F-9001",
+      "event_type": "item_registered",
+      "item_id": "F-9001",
+      "item_type_id": "FLANGE-F2",
+      "work_order_id": "WO-9001",
+      "origin": "purchased"
+    }
+  ],
+  "id_mapping": [
+    {
+      "system": "mes_emulator",
+      "entity": "work_order",
+      "external_id": "WO-9001",
+      "internal_id": "WO-9001"
+    },
+    {
+      "system": "mes_emulator",
+      "entity": "item",
+      "external_id": "U-9001",
+      "internal_id": "U-9001"
+    }
+  ],
+  "outbound_quality_report": {
+    "msgId": "QR-5d3c1f0a9b7e2d41",
+    "orderNo": "WO-9001",
+    "serial": "U-9001",
+    "product": "UNIT-U1",
+    "verdict": "OK",
+    "issues": [],
+    "ts": "2026-09-26T10:12:00+00:00"
+  },
+  "ack_accepted": {
+    "status_code": 202,
+    "body": {
+      "msgId": "QR-5d3c1f0a9b7e2d41",
+      "status": "accepted",
+      "ref": "QR-7A1B2C3D"
+    }
+  },
+  "ack_duplicate": {
+    "status_code": 200,
+    "body": {
+      "msgId": "QR-5d3c1f0a9b7e2d41",
+      "status": "duplicate",
+      "ref": "QR-7A1B2C3D"
+    }
+  },
+  "error_content": {
+    "status_code": 422,
+    "body": {
+      "error": "unknown_serial",
+      "msgId": "QR-0000000000000000"
+    },
+    "handling": "ошибка содержания: сообщение уходит в недоставленные с причиной, повтор не выполняется"
+  },
+  "error_temporary": {
+    "status_code": 503,
+    "body": {
+      "detail": "temporarily_unavailable"
+    },
+    "handling": "временная ошибка: сообщение остаётся в очереди, пауза до повтора растёт вдвое от 5 с до часа, не более max_attempts попыток"
+  }
+}

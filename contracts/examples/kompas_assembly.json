@@ -1,0 +1,13 @@
+{
+  "assembly_id": "УК.001.000 СБ",
+  "version": "3",
+  "item_type_id": "UNIT-U1",
+  "components": [
+    {"designation": "УК.001.001", "name": "Корпус", "item_type_id": "BODY-K1", "quantity": 1, "origin": "manufactured"},
+    {"designation": "ГОСТ 12820-80", "name": "Фланец", "item_type_id": "FLANGE-F2", "quantity": 1, "origin": "purchased"}
+  ],
+  "links": [
+    {"from": "УК.001.001", "to": "ГОСТ 12820-80", "kind": "сварное соединение", "note": "условная связь, без геометрии"}
+  ],
+  "geometry": null
+}

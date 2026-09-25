@@ -1,0 +1,25 @@
+{
+  "OperationsSchedule": {
+    "ID": "SCH-2026-09-26",
+    "OperationsType": "Production",
+    "OperationsRequest": [
+      {
+        "ID": "OR-501",
+        "ProductID": "UNIT-U1",
+        "EndTime": "2026-09-28T18:00:00+03:00",
+        "HierarchyScope": {"EquipmentID": "L1", "EquipmentLevel": "ProductionLine"},
+        "SegmentRequirement": [
+          {
+            "ID": "SEG-ASM",
+            "ProcessSegmentID": "Assembly",
+            "MaterialRequirement": [
+              {"MaterialDefinitionID": "UNIT-U1", "MaterialLotID": ["U-MES-0501"], "MaterialUse": "Produced"},
+              {"MaterialDefinitionID": "BODY-K1", "MaterialLotID": ["B-MES-0501"], "MaterialUse": "Produced", "AssemblyOf": "U-MES-0501"},
+              {"MaterialDefinitionID": "FLANGE-F2", "MaterialLotID": ["F-MES-0501"], "MaterialUse": "Consumed", "AssemblyOf": "U-MES-0501"}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
