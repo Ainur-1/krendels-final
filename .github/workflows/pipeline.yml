@@ -1,4 +1,6 @@
-# Стиль и тесты на каждом пуше. Сборка образа добавится, когда появится что собирать.
+# Стиль, тесты, согласованность сгенерированного и сценарии — на каждом пуше. Образ
+# собирается только после зелёных проверок: `needs` не запустит сборку, если упала
+# хоть одна.
 name: pipeline
 
 on:
@@ -10,8 +12,7 @@ on:
 permissions:
   contents: read
 
-# Второй пуш в ту же ветку делает первый неактуальным, поэтому он отменяется, а не
-# доходит до конца.
+# Второй пуш в ту же ветку делает первый неактуальным, поэтому он отменяется.
 concurrency:
   group: pipeline-${{ github.ref }}
   cancel-in-progress: true
@@ -24,10 +25,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
 
-    # Для каждого вызова uv в этой задаче, а не только для первого. Иначе голый
-    # `uv run` прочитает .python-version, найдёт другой интерпретатор, пересоберёт
-    # окружение без набора для разработки, и ветка матрицы молча перестанет проверять
-    # ту версию, в честь которой названа.
+    # Для каждого вызова uv в этой задаче. Иначе голый `uv run` прочитает
+    # .python-version, пересоберёт окружение другим интерпретатором, и ветка матрицы
+    # молча перестанет проверять ту версию, в честь которой названа.
     env:
       UV_PYTHON: ${{ matrix.python-version }}
 
@@ -41,6 +41,42 @@ jobs:
 
       - run: uv sync --locked --extra dev
 
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests scripts
+
+      - run: uv run ruff format --check src tests scripts
 
       - run: uv run pytest
+
+      # Модели, реестр, документ контракта и перечисления интерфейса порождаются из
+      # JSON Schema. Правка схемы без перегенерации или правка сгенерированного руками
+      # падает здесь, а не у потребителя сообщения.
+      - name: Сгенерированное совпадает со схемой
+        if: matrix.python-version == '3.12'
+        run: uv run python scripts/check_generated.py
+
+      - name: Версии контракта совместимы
+        run: uv run python scripts/check_compat.py
+
+      - name: Спецификация API совпадает с кодом
+        run: uv run python scripts/export_openapi.py --check
+
+      # Восемь обязательных ситуаций постановки со сверкой с ожиданиями, записанными
+      # отдельно от входных событий.
+      - name: Проверочные сценарии
+        run: uv run python scripts/check_scenarios.py
+
+  image:
+    needs: [backend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Образ собирается, но не публикуется: цель — убедиться, что запуск на чистой
+      # машине воспроизводим.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: zero-defect:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

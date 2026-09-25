@@ -1,0 +1,22 @@
+# Сервис и эмулятор внешней системы на одной машине. Эмулятор — тот же образ с другой
+# командой: отдельный процесс нужен, чтобы обмен шёл по сети, как с настоящей MES.
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ZD_MES_EMULATOR_BASE_URL: http://emulator:8100
+    volumes:
+      - zd-state:/app/var
+    depends_on:
+      - emulator
+
+  emulator:
+    build: .
+    command: ["uvicorn", "zero_defect.integration.emulator:app", "--host", "0.0.0.0", "--port", "8100"]
+    ports:
+      - "8100:8100"
+
+volumes:
+  zd-state:
