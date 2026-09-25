@@ -70,9 +70,12 @@ def _describe_run(run: Run) -> str:
     return f"{run.operation_id or 'операция'} ({run.run_id}, {where})"
 
 
-def _checkpoint(observation: Observation) -> str:
+def _checkpoint(observation: Observation, settings: Settings) -> str:
     event = observation.event
-    return f"{event.checkpoint_id} ({event.checkpoint_kind}) в {event.occurred_at:%d.%m %H:%M}"
+    # Время — в часовом поясе предприятия: источники вправе присылать его в любом поясе,
+    # а текст разбора читают люди на участке.
+    local = event.occurred_at.astimezone(settings.timezone)
+    return f"{event.checkpoint_id} ({event.checkpoint_kind}) в {local:%d.%m %H:%M}"
 
 
 def assess(card: Nonconformance, history: History, settings: Settings) -> Assessment:
@@ -89,7 +92,7 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
         result.evidence.append(
             {
                 "kind": "incoming_inspection",
-                "text": f"признак зафиксирован на входном контроле {_checkpoint(first)}, "
+                "text": f"признак зафиксирован на входном контроле {_checkpoint(first, settings)}, "
                 "до любых операций на предприятии",
                 "event_ids": [event.event_id],
             }
@@ -159,7 +162,8 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
         result.evidence.append(
             {
                 "kind": "clean_boundary",
-                "text": f"последний достоверный контроль без признаков — {_checkpoint(boundary)}; "
+                "text": "последний достоверный контроль без признаков — "
+                f"{_checkpoint(boundary, settings)}; "
                 "операций между ним и обнаружением не было",
                 "event_ids": [boundary.event.event_id],
             }
@@ -172,7 +176,8 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
         result.evidence.append(
             {
                 "kind": "clean_boundary",
-                "text": f"последний достоверный контроль без признаков — {_checkpoint(boundary)}; "
+                "text": "последний достоверный контроль без признаков — "
+                f"{_checkpoint(boundary, settings)}; "
                 "признак появился после него",
                 "event_ids": [boundary.event.event_id],
             }
@@ -188,7 +193,8 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
 
     for obs in unreliable_before:
         result.missing.append(
-            f"контроль {_checkpoint(obs)} не позволяет судить о дефекте: {obs.reliability_note}"
+            f"контроль {_checkpoint(obs, settings)} не позволяет судить о дефекте: "
+            f"{obs.reliability_note}"
         )
 
     deviations = []

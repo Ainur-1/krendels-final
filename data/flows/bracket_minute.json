@@ -1,0 +1,31 @@
+{
+  "format": "zd-flow/1",
+  "line": {
+    "line_id": "DEMO",
+    "title": "Демонстрация · кронштейн, 24 изделия за минуту",
+    "product_type_id": "BRACKET-D1",
+    "description": "Поток для минутного показа: три принудительных дефекта в разных этапах и одно отклонение оборудования.",
+    "takt_min": 6,
+    "steps": [
+      {"title": "Входной контроль листа", "kind": "inspection", "duration_min": 2, "defect_rate_pct": 2, "defect_types": ["LAMINATION"]},
+      {"title": "Лазерная резка", "kind": "operation", "duration_min": 7, "defect_rate_pct": 3, "defect_types": ["BURR", "DROSS"], "rework_types": ["BURR"], "equipment_id": "LASER-D1", "operators": ["OP-D1", "OP-D2"]},
+      {"title": "Контроль реза", "kind": "inspection", "duration_min": 2},
+      {"title": "Гибка", "kind": "operation", "duration_min": 6, "defect_rate_pct": 3, "defect_types": ["CRACK", "ANGLE_DEVIATION"], "equipment_id": "PRESS-D1", "operators": ["OP-D3"]},
+      {"title": "Контроль геометрии", "kind": "inspection", "duration_min": 2},
+      {"title": "Покрытие", "kind": "operation", "duration_min": 8, "defect_rate_pct": 2, "defect_types": ["COATING_GAP", "SAG"], "equipment_id": "PAINT-D1", "operators": ["OP-D4"]},
+      {"title": "Финальный контроль ОТК", "kind": "inspection", "duration_min": 3}
+    ],
+    "economics": {"item_value_rub": 24000, "rework_cost_rub": 1200, "scrap_cost_rub": 17000, "hour_cost_rub": 3100, "shift_hours": 12}
+  },
+  "run": {
+    "items": 24,
+    "duration_s": 60,
+    "seed": 7,
+    "defects": [
+      {"item": 5, "stage": 2, "kind": "defect"},
+      {"item": 11, "stage": 4, "kind": "deviation"},
+      {"item": 17, "stage": 6, "kind": "defect"},
+      {"item": 21, "stage": 1, "kind": "defect"}
+    ]
+  }
+}
