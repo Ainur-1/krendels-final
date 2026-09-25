@@ -1,0 +1,46 @@
+# Стиль и тесты на каждом пуше. Сборка образа добавится, когда появится что собирать.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Второй пуш в ту же ветку делает первый неактуальным, поэтому он отменяется, а не
+# доходит до конца.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    # Для каждого вызова uv в этой задаче, а не только для первого. Иначе голый
+    # `uv run` прочитает .python-version, найдёт другой интерпретатор, пересоберёт
+    # окружение без набора для разработки, и ветка матрицы молча перестанет проверять
+    # ту версию, в честь которой названа.
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked --extra dev
+
+      - run: uv run ruff check src tests
+
+      - run: uv run pytest

@@ -1,0 +1,38 @@
+[project]
+name = "zero-defect"
+version = "0.1.0"
+description = "Automated quality control of space-industry parts under closed production and scarce data"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# Основной набор — ровно то, что импортирует пакет. Подход к поиску дефектов ещё не
+# выбран, поэтому тяжёлые библиотеки распознавания сюда не входят: каждая добавляется
+# отдельным набором тогда, когда появляется код, который её импортирует. Иначе
+# окружение и будущий образ несли бы гигабайты, которыми никто не пользуется.
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zero_defect"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
