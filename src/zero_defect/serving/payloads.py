@@ -167,7 +167,7 @@ def allowed_actions(card: Nonconformance, principal: Principal) -> list[str]:
 
 
 def nc_card(card: Nonconformance, system: QualitySystem, principal: Principal) -> dict:
-    state = system.state()
+    state = system.snapshot()
     signals = []
     evidence = []
     for signal in card.signals:
@@ -199,7 +199,7 @@ def nc_card(card: Nonconformance, system: QualitySystem, principal: Principal) -
 
 
 def item_view(item_id: str, system: QualitySystem) -> dict | None:
-    state = system.state()
+    state = system.snapshot()
     history = state.history
     item = history.items.get(item_id)
     if item is None:
@@ -245,7 +245,7 @@ def _run_order(run: Run) -> tuple[bool, float]:
 
 
 def line_view(system: QualitySystem) -> dict:
-    state = system.state()
+    state = system.snapshot()
     history = state.history
     stations: dict[str, dict] = {}
     for station_id, title in STATION_TITLES.items():

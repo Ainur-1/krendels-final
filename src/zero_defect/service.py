@@ -90,6 +90,14 @@ class QualitySystem:
         self._integration: list[dict] = []
         self._duplicates = 0
         self._state: State | None = None
+        # Версия данных растёт с каждым принятым событием или решением. Снимок помнит, из
+        # какой версии построен, и пересобирается, только когда она устарела.
+        self._version = 0
+        self._state_version = -1
+        self._state_built = 0.0
+        self._build_lock = threading.Lock()
+        self._moments: dict[str, State] = {}
+        self._moments_version = -1
         self._lock = threading.RLock()
         self._load()
 
@@ -158,7 +166,7 @@ class QualitySystem:
                 elif result.status == "duplicate":
                     self._duplicates += 1
             if accepted:
-                self._state = None
+                self._version += 1
         if accepted:
             self._notify("events", {"count": len(accepted)})
         return results
@@ -202,7 +210,7 @@ class QualitySystem:
             header = self.ledger.append("decision", decision.as_dict(), ref_id=nc_id)
             decision = replace(decision, ledger_seq=header.seq)
             self._decisions.append(decision)
-            self._state = None
+            self._version += 1
         self._notify("decision", {"decision": decision, "item_id": card.item_id})
         return decision
 
@@ -251,15 +259,67 @@ class QualitySystem:
 
     # --- представления -------------------------------------------------------------
 
-    def state(self) -> State:
-        with self._lock:
-            if self._state is None:
-                self._state = self._build()
-            return self._state
+    def state(self, max_age: float | None = None) -> State:
+        """Снимок всех представлений.
 
-    def _build(self) -> State:
-        history = build_history(list(self._events), self.settings)
-        cards = build_nonconformances(history, list(self._decisions))
+        Без max_age — всегда по последним данным: так работают решения людей. С max_age
+        допускается снимок не старше max_age секунд: так читают опросы интерфейса. Пока
+        идёт эмуляция, события приходят каждую секунду, и пересборка на каждый опрос
+        держала бы сервис занятым только ею.
+        """
+
+        with self._build_lock:
+            with self._lock:
+                version = self._version
+                fresh = self._state is not None and self._state_version == version
+                young = (
+                    self._state is not None
+                    and max_age is not None
+                    and time.monotonic() - self._state_built < max_age
+                )
+                if fresh or young:
+                    return self._state
+                events, decisions = list(self._events), list(self._decisions)
+            # Пересборка идёт вне общей блокировки: приём событий в это время не ждёт.
+            state = self._build(events, decisions)
+            with self._lock:
+                self._state, self._state_version = state, version
+                self._state_built = time.monotonic()
+            return state
+
+    def snapshot(self) -> State:
+        """Снимок для чтения интерфейсом: не старше секунды."""
+
+        return self.state(max_age=1.0)
+
+    def state_at(self, moment: datetime) -> State:
+        """Состояние системы на момент времени: события и решения, случившиеся до него.
+
+        Шкала времени интерфейса и переход к моменту отказа из очереди решений смотрят
+        сюда. Будущее относительно момента не видно: ни поздно пришедших событий, ни
+        решений, принятых позже.
+        """
+
+        key = moment.isoformat(timespec="seconds")
+        with self._lock:
+            if self._moments_version != self._version:
+                self._moments, self._moments_version = {}, self._version
+            cached = self._moments.get(key)
+            if cached is not None:
+                return cached
+            events = [event for event in self._events if event.occurred_at <= moment]
+            decisions = [item for item in self._decisions if item.decided_at <= moment]
+        state = self._build(events, decisions)
+        with self._lock:
+            # Шкалу времени двигают рывками, поэтому помнится дюжина последних моментов.
+            if len(self._moments) >= 12:
+                self._moments.pop(next(iter(self._moments)))
+            self._moments[key] = state
+        return state
+
+    def _build(self, events: list, decisions: list[Decision]) -> State:
+        history = build_history(events, self.settings)
+        cards = build_nonconformances(history, decisions)
         for card in cards.values():
             card.assessment = assess(card, history, self.settings).as_dict()
         statuses = {item_id: item_status(item_id, history, cards) for item_id in history.items}
