@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zero Defect</title>
+  <link rel="stylesheet" href="/static/styles.css?v=0.1.0">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◎</span>
+      <div>
+        <div class="name">Zero Defect</div>
+        <div class="sub">прослеживаемость изделия и разбор несоответствий</div>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="line" class="active">Линия</button>
+      <button data-view="items">Изделия</button>
+      <button data-view="ncs">Несоответствия</button>
+      <button data-view="metrics">Показатели</button>
+      <button data-view="security">Журнал и защита</button>
+      <button data-view="integration">Интеграции</button>
+    </nav>
+    <label class="user">
+      <span>Пользователь</span>
+      <select id="user"></select>
+    </label>
+  </header>
+  <main id="view" aria-live="polite"></main>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/static/app.js?v=0.1.0"></script>
+</body>
+</html>
