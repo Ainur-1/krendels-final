@@ -16,10 +16,10 @@ from zero_defect.security.auth import (
     CRITICAL,
     AuthError,
     Principal,
-    load_users,
     read_token,
     verify_source,
 )
+from zero_defect.security.users import UserStore
 
 AuditSink = Callable[[str, Principal, dict], None]
 
@@ -27,16 +27,27 @@ AuditSink = Callable[[str, Principal, dict], None]
 class SecurityBus:
     """Проверяет каждого, кто обращается к системе, и пишет аудит."""
 
-    def __init__(self, keyring: Keyring, users_path, audit: AuditSink) -> None:
+    def __init__(self, keyring: Keyring, users: UserStore, audit: AuditSink) -> None:
         self.keyring = keyring
-        self.users = load_users(users_path)
+        self.store = users
         self._audit = audit
 
+    @property
+    def users(self) -> dict[str, Principal]:
+        return self.store.all()
+
     def user(self, user_id: str) -> Principal:
-        principal = self.users.get(user_id)
+        principal = self.store.all().get(user_id)
         if principal is None:
             raise AuthError(f"пользователь {user_id} не найден")
         return principal
+
+    def login(self, user_id: str, password: str) -> Principal:
+        """Вход по паролю. Ошибка одна на любой случай, чтобы не подсказывать, что не так."""
+
+        if not self.store.verify(user_id, password):
+            raise AuthError("неверный пользователь или пароль")
+        return self.user(user_id)
 
     def from_token(self, token: str | None) -> Principal:
         if not token:

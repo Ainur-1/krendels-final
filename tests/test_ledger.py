@@ -3,35 +3,45 @@
 
 Шифрование, подлинность и неизменность проверяются раздельно, как требует постановка:
 запись, которую нельзя расшифровать, всё равно проверяема по подписи, а запись,
-которую удалось расшифровать, всё равно может оказаться подменённой в цепочке.
+которую удалось расшифровать, всё равно может оказаться подменённой в цепочке. Каждый
+тест идёт на обеих СУБД — SQLite и PostgreSQL: защита от изменения в них устроена
+по-разному, а обнаружение обязано работать одинаково.
 """
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from zero_defect.ledger.crypto import PROFILES, Keyring
-from zero_defect.ledger.store import _SCHEMA, Ledger
+from zero_defect.ledger.store import Header, Ledger, canonical
+from zero_defect.storage.database import Database, create_guard
 
 
 @pytest.fixture()
-def ledger(tmp_path):
+def ledger(database_url, tmp_path):
+    database = Database(database_url)
     keyring = Keyring(tmp_path / "keys")
     keyring.ensure("hybrid-pq-v1")
-    instance = Ledger(tmp_path / "ledger.sqlite3", keyring)
-    yield instance
-    instance.close()
+    yield Ledger(database, keyring)
+    database.dispose()
 
 
-def bypass(ledger: Ledger, sql: str, params: tuple = ()) -> None:
-    conn = sqlite3.connect(ledger.path, isolation_level=None)
-    conn.execute("DROP TRIGGER ledger_no_update")
-    conn.execute("DROP TRIGGER ledger_no_delete")
-    conn.execute(sql, params)
-    conn.executescript(_SCHEMA)
-    conn.close()
+def bypass(ledger: Ledger, sql: str, params: dict | None = None) -> None:
+    """Изменение в обход защиты — так действовал бы владелец базы."""
+
+    database = ledger.database
+    with database.engine.begin() as conn:
+        if database.is_postgres:
+            conn.execute(text("ALTER TABLE ledger DISABLE TRIGGER USER"))
+        else:
+            conn.execute(text("DROP TRIGGER ledger_no_update"))
+            conn.execute(text("DROP TRIGGER ledger_no_delete"))
+        conn.execute(text(sql), params or {})
+        if database.is_postgres:
+            conn.execute(text("ALTER TABLE ledger ENABLE TRIGGER USER"))
+    create_guard(database)
 
 
 def fill(ledger: Ledger, count: int = 5) -> None:
@@ -41,18 +51,20 @@ def fill(ledger: Ledger, count: int = 5) -> None:
 
 def test_payload_is_encrypted_at_rest(ledger):
     ledger.append("source_event", {"secret": "поры в корне шва"})
-    raw = ledger.path.read_bytes()
-    assert "поры".encode() not in raw
+    with ledger.database.engine.connect() as conn:
+        stored = conn.execute(text("SELECT ciphertext FROM ledger")).scalar_one()
+    assert "поры".encode() not in bytes(stored)
     assert next(ledger.records()).payload == {"secret": "поры в корне шва"}
 
 
-def test_update_and_delete_are_prevented(ledger):
+@pytest.mark.parametrize(
+    "sql", ["UPDATE ledger SET kind = 'x' WHERE seq = 1", "DELETE FROM ledger WHERE seq = 1"]
+)
+def test_update_and_delete_are_prevented(ledger, sql):
     fill(ledger)
-    conn = sqlite3.connect(ledger.path)
-    for sql in ("UPDATE ledger SET kind = 'x' WHERE seq = 1", "DELETE FROM ledger WHERE seq = 1"):
-        with pytest.raises(sqlite3.DatabaseError):
-            conn.execute(sql)
-    conn.close()
+    with pytest.raises(DBAPIError), ledger.database.engine.begin() as conn:
+        conn.execute(text(sql))
+    assert ledger.verify().ok
 
 
 def test_clean_ledger_verifies(ledger):
@@ -64,17 +76,14 @@ def test_clean_ledger_verifies(ledger):
 @pytest.mark.parametrize(
     ("sql", "problem"),
     [
-        (
-            "UPDATE ledger SET ciphertext = x'00' || substr(ciphertext, 2) WHERE seq = 2",
-            "hash_mismatch",
-        ),
+        ("UPDATE ledger SET ciphertext = :forged WHERE seq = 2", "hash_mismatch"),
         ("DELETE FROM ledger WHERE seq = 3", "chain_break"),
         ("UPDATE ledger SET kind = 'decision' WHERE seq = 2", "hash_mismatch"),
     ],
 )
 def test_bypass_changes_are_detected(ledger, sql, problem):
     fill(ledger)
-    bypass(ledger, sql)
+    bypass(ledger, sql, {"forged": b"\x00" * 40} if ":forged" in sql else None)
     problems = {item["problem"] for item in ledger.verify().problems}
     assert problem in problems
 
@@ -90,18 +99,14 @@ def test_rewriting_the_whole_chain_breaks_the_signature(ledger):
 
     fill(ledger, 1)
     profile = PROFILES["hybrid-pq-v1"]
-    conn = sqlite3.connect(ledger.path)
-    row = conn.execute("SELECT * FROM ledger WHERE seq = 1").fetchone()
-    conn.close()
+    row = next(ledger._rows())
     forged_cipher = b"\x00" + row[11][1:]
-    from zero_defect.ledger.store import Header, canonical
-
     aad = canonical(Header(*row[:10]).as_dict())
     forged_hash = profile.digest(row[12] + aad + row[10] + forged_cipher)
     bypass(
         ledger,
-        "UPDATE ledger SET ciphertext = ?, record_hash = ? WHERE seq = 1",
-        (forged_cipher, forged_hash),
+        "UPDATE ledger SET ciphertext = :c, record_hash = :h WHERE seq = 1",
+        {"c": forged_cipher, "h": forged_hash},
     )
     problems = {item["problem"] for item in ledger.verify().problems}
     assert "signature_invalid" in problems

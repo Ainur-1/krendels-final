@@ -28,9 +28,7 @@ def hub(system, tmp_path):
     emulator.reset()
     client = TestClient(emulator.app)
     adapter = MesEmulatorAdapter(AdapterSettings(), client=client)
-    instance = IntegrationHub(
-        system, {"mes_emulator": adapter}, Outbox(tmp_path / "integration.sqlite3")
-    )
+    instance = IntegrationHub(system, {"mes_emulator": adapter}, Outbox(system.database))
     yield instance
     emulator.reset()
 

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 from zero_defect.analysis.causes import assess
 from zero_defect.analysis.metrics import compute
-from zero_defect.config import Settings
+from zero_defect.config import Settings, resolve_storage_url
 from zero_defect.history.projection import History, build_history
 from zero_defect.ingest.pipeline import Delivery, DeliveryResult, IngestPipeline, payload_hash
 from zero_defect.ingest.validation import parse_event
@@ -35,6 +35,8 @@ from zero_defect.quality.nonconformance import (
 )
 from zero_defect.security.auth import Principal
 from zero_defect.security.bus import SecurityBus
+from zero_defect.security.users import UserStore
+from zero_defect.storage.database import close_database, open_database
 
 # Кто какое решение вправе принять. Подтвердить или отклонить несоответствие —
 # контролёр; установить причину — технолог или контролёр.
@@ -71,9 +73,11 @@ class QualitySystem:
         # записи остаются под своим профилем и проверяются им же.
         if self.keyring.active().profile_id != settings.crypto_profile:
             self.keyring.rotate(settings.crypto_profile)
-        self.ledger = Ledger(settings.storage_path, self.keyring)
+        self.database = open_database(resolve_storage_url(settings))
+        self.ledger = Ledger(self.database, self.keyring)
         self.pipeline = IngestPipeline(settings, self.ledger)
-        self.security = SecurityBus(self.keyring, settings.users_path, self._audit_sink)
+        self.users = UserStore(self.database, settings.users_path)
+        self.security = SecurityBus(self.keyring, self.users, self._audit_sink)
         self.listeners: list[Listener] = []
         self._events = []
         # Исходные сообщения как пришли: карточка несоответствия показывает их без правок.
@@ -289,7 +293,7 @@ class QualitySystem:
             listener(kind, payload)
 
     def close(self) -> None:
-        self.ledger.close()
+        close_database(self.database.url)
 
 
 def _decision_from(payload: dict, seq: int) -> Decision:

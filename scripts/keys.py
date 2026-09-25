@@ -6,6 +6,7 @@
     uv run python scripts/keys.py token ctrl-01
     uv run python scripts/keys.py source edge-cam-07
     uv run python scripts/keys.py list
+    uv run python scripts/keys.py password ctrl-01
 
 Ключи лежат в каталоге из настройки security.keys_dir, вне репозитория. Смена ключа не
 перешифровывает журнал: старые записи проверяются тем ключом, которым защищены.
@@ -14,11 +15,14 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 
-from zero_defect.config import load_settings
+from zero_defect.config import load_settings, resolve_storage_url
 from zero_defect.ledger.crypto import PROFILES, Keyring
 from zero_defect.security.auth import issue_token, load_users
+from zero_defect.security.users import UserStore
+from zero_defect.storage.database import open_database
 
 
 def main() -> int:
@@ -34,6 +38,8 @@ def main() -> int:
     token.add_argument("user_id")
     source = sub.add_parser("source")
     source.add_argument("source_id")
+    password = sub.add_parser("password")
+    password.add_argument("user_id")
     args = parser.parse_args()
 
     settings = load_settings()
@@ -53,6 +59,15 @@ def main() -> int:
         print(issue_token(keyring, user, settings.token_ttl_s))
     elif args.command == "source":
         print(keyring.register_source(args.source_id))
+    elif args.command == "password":
+        # Пароль вводится с клавиатуры и нигде не печатается; в базу ложится хеш scrypt.
+        secret = getpass.getpass(f"Пароль для {args.user_id}: ")
+        if len(secret) < 10 or secret != getpass.getpass("Ещё раз: "):
+            print("Пароль короче 10 символов или не совпал.")
+            return 1
+        database = open_database(resolve_storage_url(settings))
+        UserStore(database, settings.users_path).set_password(args.user_id, secret)
+        print(f"Пароль для {args.user_id} задан.")
     return 0
 
 

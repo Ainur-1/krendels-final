@@ -23,16 +23,21 @@ from zero_defect.ledger.crypto import Keyring
 # Права ролей. Роли — из постановки; служебная роль edge нужна источникам событий.
 PERMISSIONS: dict[str, frozenset[str]] = {
     "controller": frozenset({"read", "decide"}),
-    "master": frozenset({"read"}),
+    "master": frozenset({"read", "emulate"}),
     "technologist": frozenset({"read", "set_cause", "export"}),
-    "manager": frozenset({"read", "export"}),
-    "admin": frozenset({"read", "admin", "ingest", "export", "integrate"}),
+    # Руководитель производства — главная роль линии: создаёт линии и видит их экономику.
+    "manager": frozenset({"read", "export", "line_manage", "emulate"}),
+    "admin": frozenset(
+        {"read", "admin", "ingest", "export", "integrate", "line_manage", "emulate", "view_as"}
+    ),
     "edge": frozenset({"ingest"}),
 }
 
 # Действия, которые записываются в журнал критических действий. Чтение не пишется:
 # журнал, в котором тонут решения, никто не читает.
-CRITICAL = frozenset({"decide", "set_cause", "admin", "integrate", "login", "denied"})
+CRITICAL = frozenset(
+    {"decide", "set_cause", "admin", "integrate", "login", "denied", "line_manage", "emulate"}
+)
 
 
 class AuthError(Exception):

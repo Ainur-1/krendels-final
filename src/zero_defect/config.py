@@ -61,7 +61,9 @@ class AdapterSettings:
 class Settings:
     """Всё, что сервис читает из конфигурации. Неизменяемо после создания."""
 
-    storage_path: Path
+    # Адрес базы SQLAlchemy или «embedded» — встроенный PostgreSQL в var/pgdata для
+    # разработки.
+    storage_url: str
     keys_dir: Path
     crypto_profile: str = "hybrid-pq-v1"
     token_ttl_s: int = 43200
@@ -90,6 +92,16 @@ def _resolve(path: str) -> Path:
 def _parse_time(text: str) -> time:
     hours, minutes = text.split(":")
     return time(int(hours), int(minutes))
+
+
+def resolve_storage_url(settings: Settings) -> str:
+    """Адрес базы для подключения: «embedded» превращается в адрес встроенного сервера."""
+
+    if settings.storage_url == "embedded":
+        from zero_defect.storage.embedded import data_dir_for, embedded_url
+
+        return embedded_url(data_dir_for(PROJECT_ROOT, "pgdata"))
+    return settings.storage_url
 
 
 def load_settings(path: Path | None = None, **overrides: object) -> Settings:
@@ -123,7 +135,7 @@ def load_settings(path: Path | None = None, **overrides: object) -> Settings:
         )
 
     values: dict[str, object] = {
-        "storage_path": _resolve(str(pick("storage", "path", "var/zero_defect.sqlite3"))),
+        "storage_url": str(pick("storage", "url", "embedded")),
         "keys_dir": _resolve(str(pick("security", "keys_dir", "var/keys"))),
         "crypto_profile": str(pick("security", "crypto_profile", "hybrid-pq-v1")),
         "token_ttl_s": int(pick("security", "token_ttl_s", 43200, int)),

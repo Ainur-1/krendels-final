@@ -12,17 +12,18 @@ from __future__ import annotations
 
 import sys
 
-from zero_defect.config import load_settings
-from zero_defect.simulation.replay import tamper_event_record, update_is_prevented
+from zero_defect.config import load_settings, resolve_storage_url
+from zero_defect.simulation.tamper import tamper_event_record, update_is_prevented
+from zero_defect.storage.database import open_database
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__)
         return 2
-    path = load_settings().storage_path
-    print(f"Обычное изменение запрещено журналом: {update_is_prevented(path)}")
-    seq = tamper_event_record(path, argv[0])
+    database = open_database(resolve_storage_url(load_settings()))
+    print(f"Обычное изменение запрещено журналом: {update_is_prevented(database)}")
+    seq = tamper_event_record(database, argv[0])
     print(f"Запись №{seq} (событие {argv[0]}) изменена в обход приложения.")
     return 0
 

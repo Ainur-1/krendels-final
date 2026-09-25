@@ -9,13 +9,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 from zero_defect.ingest.pipeline import Delivery, DeliveryResult
-from zero_defect.ledger.store import _SCHEMA
 from zero_defect.service import QualitySystem
+from zero_defect.simulation.tamper import tamper_event_record
 
 
 def load_steps(path: Path) -> list[dict]:
@@ -30,55 +29,30 @@ def write_steps(path: Path, steps: list[dict]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def tamper_event_record(db_path: Path, event_id: str) -> int:
-    """Меняет один байт зашифрованной записи события в обход приложения.
-
-    Так поступил бы человек с доступом к файлу базы: триггеры он снимает, правит запись и
-    возвращает триггеры на место. Предотвратить это приложение не может — может только
-    обнаружить, и именно это проверяет сценарий.
-    """
-
-    conn = sqlite3.connect(db_path, isolation_level=None)
-    try:
-        seq, ciphertext = conn.execute(
-            "SELECT seq, ciphertext FROM ledger WHERE kind = 'source_event' AND ref_id = ?",
-            (event_id,),
-        ).fetchone()
-        changed = bytearray(ciphertext)
-        changed[len(changed) // 2] ^= 0x01
-        conn.execute("DROP TRIGGER ledger_no_update")
-        conn.execute("UPDATE ledger SET ciphertext = ? WHERE seq = ?", (bytes(changed), seq))
-        conn.executescript(_SCHEMA)
-        return seq
-    finally:
-        conn.close()
-
-
-def update_is_prevented(db_path: Path) -> bool:
-    """Пытается изменить запись обычным путём; True, если журнал это запретил."""
-
-    conn = sqlite3.connect(db_path, isolation_level=None)
-    try:
-        conn.execute("UPDATE ledger SET kind = kind WHERE seq = 1")
-        return False
-    except sqlite3.DatabaseError:
-        return True
-    finally:
-        conn.close()
-
-
 def replay(system: QualitySystem, steps: list[dict]) -> dict:
     """Проигрывает шаги и возвращает сводку того, что произошло по ходу."""
 
     results: list[DeliveryResult] = []
     tampered: list[int] = []
     decision_errors: list[str] = []
+    batch: list[Delivery] = []
+
+    def flush() -> None:
+        if batch:
+            results.extend(system.ingest_deliveries(list(batch)))
+            batch.clear()
+
     for step in steps:
         kind = step["kind"]
         if kind == "deliver":
-            received = datetime.fromisoformat(step["received_at"])
-            results.extend(system.ingest_deliveries([Delivery(step["event"], received)]))
-        elif kind == "decide":
+            # Подряд идущие доставки уходят одним пакетом, как от edge-агента: так история
+            # на тысячи событий загружается за секунды, а порядок шагов не меняется.
+            batch.append(Delivery(step["event"], datetime.fromisoformat(step["received_at"])))
+            if len(batch) >= 200:
+                flush()
+            continue
+        flush()
+        if kind == "decide":
             principal = system.security.user(step["user_id"])
             try:
                 system.decide(
@@ -92,5 +66,6 @@ def replay(system: QualitySystem, steps: list[dict]) -> dict:
             except Exception as error:  # noqa: BLE001 — ошибка решения часть итога сценария
                 decision_errors.append(f"{step['nc_id']} {step['action']}: {error}")
         elif kind == "tamper":
-            tampered.append(tamper_event_record(system.settings.storage_path, step["event_id"]))
+            tampered.append(tamper_event_record(system.database, step["event_id"]))
+    flush()
     return {"results": results, "tampered_seqs": tampered, "decision_errors": decision_errors}

@@ -6,8 +6,8 @@
 карточки, показатели) строятся из журнала и в любой момент пересобираются заново.
 
 Защита в три слоя, и каждый ловит своё:
-- триггеры SQLite запрещают UPDATE и DELETE — это предотвращение для всех, кто
-  работает через обычное соединение;
+- триггеры в самой СУБД (PostgreSQL или SQLite) запрещают UPDATE, DELETE и TRUNCATE —
+  это предотвращение для всех, кто работает через обычное соединение;
 - каждая запись несёт хеш предыдущей, а последняя запись каждого пакета — подпись своего
   хеша. Через цепочку эта подпись удостоверяет и все записи до неё: правка любой
   записи в обход триггеров меняет её хеш, а с ним и хеш подписанной записи. Правка
@@ -19,43 +19,20 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
+
+from sqlalchemy import LargeBinary, cast, func, insert, select
 
 from zero_defect.config import RECORD_FORMAT_VERSION
 from zero_defect.ledger.crypto import PROFILES, CryptoError, Keyring
+from zero_defect.storage.database import Database
+from zero_defect.storage.database import ledger as ledger_table
 
 GENESIS = b"\x00" * 32
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS ledger (
-    seq            INTEGER PRIMARY KEY,
-    record_id      TEXT    NOT NULL UNIQUE,
-    kind           TEXT    NOT NULL,
-    ref_id         TEXT,
-    written_at     TEXT    NOT NULL,
-    format_version TEXT    NOT NULL,
-    profile_id     TEXT    NOT NULL,
-    key_id         TEXT    NOT NULL,
-    key_version    INTEGER NOT NULL,
-    mechanism      TEXT    NOT NULL,
-    nonce          BLOB    NOT NULL,
-    ciphertext     BLOB    NOT NULL,
-    prev_hash      BLOB    NOT NULL,
-    record_hash    BLOB    NOT NULL,
-    signature      BLOB    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ledger_kind ON ledger(kind);
-CREATE TRIGGER IF NOT EXISTS ledger_no_update BEFORE UPDATE ON ledger
-BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS ledger_no_delete BEFORE DELETE ON ledger
-BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
-"""
 
 # Виды записей. Исходные события, отклонённые сообщения и повторные доставки хранятся
 # раздельно: карантин не должен влиять на историю, а повтор — на показатели.
@@ -135,31 +112,19 @@ class IntegrityReport:
 
 
 class Ledger:
-    """Журнал поверх SQLite с одной пишущей стороной."""
+    """Журнал в базе данных с одной пишущей стороной."""
 
-    def __init__(self, path: Path, keyring: Keyring) -> None:
-        self.path = path
+    def __init__(self, database: Database, keyring: Keyring) -> None:
+        self.database = database
         self.keyring = keyring
         self._anchor_path = keyring.keys_dir / "anchor.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Один писатель: номер записи и хеш предыдущей должны браться атомарно, иначе две
-        # параллельные записи сошлись бы на одном предшественнике и цепочка разветвилась.
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
 
     def close(self) -> None:
-        self._conn.close()
-
-    def _head(self) -> tuple[int, bytes]:
-        row = self._conn.execute(
-            "SELECT seq, record_hash FROM ledger ORDER BY seq DESC LIMIT 1"
-        ).fetchone()
-        return (row[0], row[1]) if row else (0, GENESIS)
+        """База общая на процесс и закрывается владельцем, журнал своего соединения не держит."""
 
     def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]
+        with self.database.engine.connect() as conn:
+            return conn.execute(select(func.count()).select_from(ledger_table)).scalar_one()
 
     def append(self, kind: str, payload: dict, ref_id: str | None = None) -> Header:
         return self.append_many([(kind, payload, ref_id)])[0]
@@ -172,62 +137,56 @@ class Ledger:
         key = self.keyring.active()
         profile = PROFILES[key.profile_id]
         secret = self.keyring.secret(key.key_id)
-        headers = []
-        with self._lock:
-            seq, prev_hash = self._head()
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                for kind, payload, ref_id in entries:
-                    if kind not in KINDS:
-                        raise ValueError(f"неизвестный вид записи {kind!r}")
-                    seq += 1
-                    header = Header(
-                        seq=seq,
-                        record_id=str(uuid.uuid4()),
-                        kind=kind,
-                        ref_id=ref_id,
-                        written_at=datetime.now(UTC).isoformat(),
-                        format_version=RECORD_FORMAT_VERSION,
-                        profile_id=profile.profile_id,
-                        key_id=key.key_id,
-                        key_version=key.key_version,
-                        mechanism=profile.mechanism,
-                    )
-                    aad = canonical(header.as_dict())
-                    nonce, ciphertext = profile.encrypt(secret, canonical(payload), aad)
-                    record_hash = profile.digest(prev_hash + aad + nonce + ciphertext)
-                    # Подписывается только последняя запись пакета. Подпись ML-DSA стоит
-                    # около 4,5 мс, и подпись каждой записи съедала 98 % времени приёма
-                    # (профиль нагрузочного прогона); через цепочку хешей подпись
-                    # последней записи удостоверяет весь пакет.
-                    last = len(headers) == len(entries) - 1
-                    signature = profile.sign(secret, record_hash) if last else b""
-                    self._conn.execute(
-                        "INSERT INTO ledger VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (
-                            header.seq,
-                            header.record_id,
-                            header.kind,
-                            header.ref_id,
-                            header.written_at,
-                            header.format_version,
-                            header.profile_id,
-                            header.key_id,
-                            header.key_version,
-                            header.mechanism,
-                            nonce,
-                            ciphertext,
-                            prev_hash,
-                            record_hash,
-                            signature,
-                        ),
-                    )
-                    prev_hash = record_hash
-                    headers.append(header)
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
+        headers: list[Header] = []
+        rows: list[dict] = []
+        with self.database.ledger_transaction() as conn:
+            head = conn.execute(
+                select(ledger_table.c.seq, cast(ledger_table.c.record_hash, LargeBinary))
+                .order_by(ledger_table.c.seq.desc())
+                .limit(1)
+            ).first()
+            seq, prev_hash = (head[0], bytes(head[1])) if head else (0, GENESIS)
+            for kind, payload, ref_id in entries:
+                if kind not in KINDS:
+                    raise ValueError(f"неизвестный вид записи {kind!r}")
+                seq += 1
+                header = Header(
+                    seq=seq,
+                    record_id=str(uuid.uuid4()),
+                    kind=kind,
+                    ref_id=ref_id,
+                    written_at=datetime.now(UTC).isoformat(),
+                    format_version=RECORD_FORMAT_VERSION,
+                    profile_id=profile.profile_id,
+                    key_id=key.key_id,
+                    key_version=key.key_version,
+                    mechanism=profile.mechanism,
+                )
+                aad = canonical(header.as_dict())
+                nonce, ciphertext = profile.encrypt(secret, canonical(payload), aad)
+                record_hash = profile.digest(prev_hash + aad + nonce + ciphertext)
+                # Подписывается только последняя запись пакета. Подпись ML-DSA стоит
+                # около 4,5 мс, и подпись каждой записи съедала 98 % времени приёма
+                # (профиль нагрузочного прогона); через цепочку хешей подпись
+                # последней записи удостоверяет весь пакет.
+                last = len(headers) == len(entries) - 1
+                signature = profile.sign(secret, record_hash) if last else b""
+                rows.append(
+                    {
+                        **header.as_dict(),
+                        "nonce": nonce,
+                        "ciphertext": ciphertext,
+                        "prev_hash": prev_hash,
+                        "record_hash": record_hash,
+                        "signature": signature,
+                    }
+                )
+                prev_hash = record_hash
+                headers.append(header)
+            conn.execute(insert(ledger_table), rows)
+        # Якорь пишется после фиксации транзакции: якорь впереди журнала выглядел бы как
+        # отрезанный хвост, хотя транзакция просто не прошла.
+        with self.database.write_lock:
             self._write_anchor(seq, prev_hash)
         return headers
 
@@ -245,19 +204,32 @@ class Ledger:
         self._anchor_path.write_text(json.dumps(anchor), encoding="utf-8")
 
     def _rows(self, kinds: tuple[str, ...] | None = None) -> Iterator[tuple]:
-        # Двоичные столбцы приводятся к BLOB явно: если в обход приложения туда записали
-        # текст, чтение не падает целиком, а проверка указывает на испорченную запись.
-        query = (
-            "SELECT seq, record_id, kind, ref_id, written_at, format_version, profile_id, key_id,"
-            " key_version, mechanism, CAST(nonce AS BLOB), CAST(ciphertext AS BLOB),"
-            " CAST(prev_hash AS BLOB), CAST(record_hash AS BLOB), CAST(signature AS BLOB)"
-            " FROM ledger"
-        )
-        params: tuple = ()
+        # Двоичные столбцы приводятся к двоичному типу явно: если в обход приложения туда
+        # записали текст, чтение не падает целиком, а проверка указывает на испорченную
+        # запись.
+        c = ledger_table.c
+        query = select(
+            c.seq,
+            c.record_id,
+            c.kind,
+            c.ref_id,
+            c.written_at,
+            c.format_version,
+            c.profile_id,
+            c.key_id,
+            c.key_version,
+            c.mechanism,
+            cast(c.nonce, LargeBinary),
+            cast(c.ciphertext, LargeBinary),
+            cast(c.prev_hash, LargeBinary),
+            cast(c.record_hash, LargeBinary),
+            cast(c.signature, LargeBinary),
+        ).order_by(c.seq)
         if kinds:
-            query += f" WHERE kind IN ({','.join('?' * len(kinds))})"
-            params = kinds
-        yield from self._conn.execute(query + " ORDER BY seq", params)
+            query = query.where(c.kind.in_(kinds))
+        with self.database.engine.connect() as conn:
+            for row in conn.execute(query):
+                yield (*row[:10], *(bytes(value or b"") for value in row[10:15]))
 
     def records(self, kinds: tuple[str, ...] | None = None) -> Iterator[Record]:
         """Расшифрованные записи по порядку. Сбой одной записи не прерывает чтение."""
@@ -288,6 +260,14 @@ class Ledger:
         """Проверяет цепочку, подписи и якорь. Не требует секретных ключей."""
 
         problems: list[dict] = []
+        # Якорь читается до записей: пока идёт проверка, сервис может дописать пакет, и
+        # якорь, прочитанный после записей, оказался бы впереди них — ложный «отрезанный
+        # хвост». Прочитанный заранее якорь всегда не новее прочитанных записей.
+        anchor = (
+            json.loads(self._anchor_path.read_text(encoding="utf-8"))
+            if self._anchor_path.exists()
+            else None
+        )
         prev_hash = GENESIS
         expected_seq = 0
         checked = 0
@@ -325,8 +305,7 @@ class Ledger:
             # что записи дописаны мимо приложения.
             problems.append({"seq": expected_seq, "problem": "unsigned_tail"})
         anchor_seq = None
-        if self._anchor_path.exists():
-            anchor = json.loads(self._anchor_path.read_text(encoding="utf-8"))
+        if anchor is not None:
             anchor_seq = anchor["seq"]
             try:
                 key = self.keyring.info(anchor["key_id"])

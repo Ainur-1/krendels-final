@@ -17,7 +17,8 @@ from pathlib import Path
 from zero_defect.config import PROJECT_ROOT
 from zero_defect.ledger.crypto import Keyring
 from zero_defect.ledger.store import Ledger
-from zero_defect.simulation.replay import tamper_event_record
+from zero_defect.simulation.tamper import tamper_event_record
+from zero_defect.storage.database import Database
 
 
 def main(argv: list[str]) -> int:
@@ -25,7 +26,8 @@ def main(argv: list[str]) -> int:
     shutil.rmtree(root, ignore_errors=True)
     keyring = Keyring(root / "keys")
     keyring.ensure("classic-v1")
-    ledger = Ledger(root / "ledger.sqlite3", keyring)
+    database = Database(f"sqlite:///{root / 'ledger.sqlite3'}")
+    ledger = Ledger(database, keyring)
     ledger.append("source_event", {"stage": "до смены ключа"}, ref_id="A1")
     first_key = keyring.active().key_id
     keyring.rotate()
@@ -41,7 +43,7 @@ def main(argv: list[str]) -> int:
             f"  {header.mechanism}"
         )
     print(f"Проверка до вмешательства: ok = {ledger.verify().ok}")
-    tamper_event_record(ledger.path, "A4")
+    tamper_event_record(database, "A4")
     keyring.forget_secret(first_key)
     print(f"Секретная часть {first_key} удалена, запись A4 изменена в обход приложения.")
     for record in ledger.records():
@@ -50,7 +52,7 @@ def main(argv: list[str]) -> int:
     print(f"Проверка после: ok = {report.ok}")
     for problem in report.problems:
         print(f"  запись №{problem['seq']}: {problem['problem']}")
-    ledger.close()
+    database.dispose()
     return 0
 
 

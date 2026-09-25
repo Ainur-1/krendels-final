@@ -16,13 +16,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
-import threading
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from zero_defect.integration.model import ExternalSystem, IntegrationError, QualityResult
 from zero_defect.service import QualitySystem
+from zero_defect.storage.database import Database
+from zero_defect.storage.database import id_map as id_map_table
+from zero_defect.storage.database import outbox as outbox_table
 
 # Статусы изделия, по которым итог уже можно сообщать наружу.
 REPORTABLE = ("conforming", "nonconforming")
@@ -31,60 +35,52 @@ REPORTABLE = ("conforming", "nonconforming")
 BASE_BACKOFF_S = 5
 MAX_BACKOFF_S = 3600
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS outbox (
-    message_id   TEXT PRIMARY KEY,
-    system       TEXT NOT NULL,
-    item_id      TEXT NOT NULL,
-    payload      TEXT NOT NULL,
-    status       TEXT NOT NULL,
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    last_error   TEXT,
-    next_attempt TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    external_ref TEXT
-);
-CREATE TABLE IF NOT EXISTS id_map (
-    system      TEXT NOT NULL,
-    entity      TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    internal_id TEXT NOT NULL,
-    PRIMARY KEY (system, entity, external_id)
-);
-"""
-
 
 class Outbox:
     """Исходящая очередь и таблица сопоставления идентификаторов.
 
     Это изменяемое рабочее состояние, а не доказательство: доказательством служат
     записи integration_exchange в журнале. Поэтому очередь лежит в отдельных таблицах
-    и может меняться.
+    той же базы и может меняться.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
-        self._conn.executescript(_SCHEMA)
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def _insert(self, table):
+        dialect = postgres_insert if self.database.is_postgres else sqlite_insert
+        return dialect(table)
 
     def enqueue(self, system: str, result: QualityResult) -> bool:
         now = datetime.now(UTC).isoformat()
         payload = json.dumps(result.__dict__, ensure_ascii=False, default=list)
-        with self._lock:
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO outbox (message_id, system, item_id, payload, status,"
-                " next_attempt, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-                (result.message_id, system, result.item_id, payload, now, now),
+        statement = (
+            self._insert(outbox_table)
+            .values(
+                message_id=result.message_id,
+                system=system,
+                item_id=result.item_id,
+                payload=payload,
+                status="pending",
+                attempts=0,
+                next_attempt=now,
+                created_at=now,
             )
-            return cursor.rowcount == 1
+            .on_conflict_do_nothing(index_elements=["message_id"])
+        )
+        with self.database.engine.begin() as conn:
+            return conn.execute(statement).rowcount == 1
 
     def due(self, system: str, moment: datetime) -> list[tuple[str, dict, int]]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT message_id, payload, attempts FROM outbox WHERE system = ?"
-                " AND status = 'pending' AND next_attempt <= ? ORDER BY created_at",
-                (system, moment.isoformat()),
-            ).fetchall()
+        c = outbox_table.c
+        with self.database.engine.connect() as conn:
+            rows = conn.execute(
+                select(c.message_id, c.payload, c.attempts)
+                .where(
+                    c.system == system, c.status == "pending", c.next_attempt <= moment.isoformat()
+                )
+                .order_by(c.created_at)
+            ).all()
         return [(row[0], json.loads(row[1]), row[2]) for row in rows]
 
     def mark(
@@ -96,37 +92,51 @@ class Outbox:
         next_attempt: datetime,
         ref: str | None,
     ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE outbox SET status = ?, attempts = ?, last_error = ?, next_attempt = ?,"
-                " external_ref = ? WHERE message_id = ?",
-                (status, attempts, error, next_attempt.isoformat(), ref, message_id),
+        with self.database.engine.begin() as conn:
+            conn.execute(
+                update(outbox_table)
+                .where(outbox_table.c.message_id == message_id)
+                .values(
+                    status=status,
+                    attempts=attempts,
+                    last_error=error,
+                    next_attempt=next_attempt.isoformat(),
+                    external_ref=ref,
+                )
             )
 
     def rows(self) -> list[dict]:
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT message_id, system, item_id, status, attempts, last_error, next_attempt,"
-                " external_ref FROM outbox ORDER BY created_at"
-            )
-            names = [column[0] for column in cursor.description]
-            return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
+        c = outbox_table.c
+        with self.database.engine.connect() as conn:
+            result = conn.execute(
+                select(
+                    c.message_id,
+                    c.system,
+                    c.item_id,
+                    c.status,
+                    c.attempts,
+                    c.last_error,
+                    c.next_attempt,
+                    c.external_ref,
+                ).order_by(c.created_at)
+            ).mappings()
+            return [dict(row) for row in result]
 
     def map_id(self, system: str, entity: str, external_id: str, internal_id: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO id_map VALUES (?, ?, ?, ?)",
-                (system, entity, external_id, internal_id),
+        statement = (
+            self._insert(id_map_table)
+            .values(system=system, entity=entity, external_id=external_id, internal_id=internal_id)
+            .on_conflict_do_update(
+                index_elements=["system", "entity", "external_id"],
+                set_={"internal_id": internal_id},
             )
+        )
+        with self.database.engine.begin() as conn:
+            conn.execute(statement)
 
     def id_map(self) -> list[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT system, entity, external_id, internal_id FROM id_map"
-            ).fetchall()
-        return [
-            {"system": r[0], "entity": r[1], "external_id": r[2], "internal_id": r[3]} for r in rows
-        ]
+        with self.database.engine.connect() as conn:
+            return [dict(row) for row in conn.execute(select(id_map_table)).mappings()]
 
 
 def result_for(system: QualitySystem, item_id: str) -> QualityResult | None:

@@ -16,7 +16,8 @@ from pathlib import Path
 
 from zero_defect.config import SCENARIOS_DIR, Settings, load_settings
 from zero_defect.service import QualitySystem
-from zero_defect.simulation.replay import load_steps, replay, update_is_prevented
+from zero_defect.simulation.replay import load_steps, replay
+from zero_defect.simulation.tamper import update_is_prevented
 
 
 def snapshot(system: QualitySystem, run: dict) -> dict:
@@ -89,7 +90,7 @@ def snapshot(system: QualitySystem, run: dict) -> dict:
         "integrity": {
             "ok": report.ok,
             "problems": sorted({problem["problem"] for problem in report.problems}),
-            "update_prevented": update_is_prevented(system.settings.storage_path),
+            "update_prevented": update_is_prevented(system.database),
         },
         "decision_errors": run["decision_errors"],
     }
@@ -143,10 +144,13 @@ def check(name: str, scenarios_dir: Path = SCENARIOS_DIR) -> tuple[list[str], di
 
 
 def fresh_settings(root: Path, **overrides) -> Settings:
-    return load_settings(
-        storage_path=root / "ledger.sqlite3",
-        keys_dir=root / "keys",
-        integrations=(),
-        adapters={},
-        **overrides,
-    )
+    """Настройки пустой системы во временном каталоге; по умолчанию база — SQLite."""
+
+    values = {
+        "storage_url": f"sqlite:///{root / 'ledger.sqlite3'}",
+        "keys_dir": root / "keys",
+        "integrations": (),
+        "adapters": {},
+    }
+    values.update(overrides)
+    return load_settings(**values)
