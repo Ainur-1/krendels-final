@@ -35,7 +35,7 @@ from zero_defect.lines.emulator import LiveEmulator
 from zero_defect.lines.store import LineStore
 from zero_defect.security.auth import PERMISSIONS, AuthError, Principal, issue_token
 from zero_defect.service import DecisionError, QualitySystem
-from zero_defect.serving import lines_routes, payloads
+from zero_defect.serving import admin_routes, lines_routes, payloads
 from zero_defect.simulation.demo import demo_steps
 from zero_defect.simulation.replay import replay
 
@@ -212,7 +212,7 @@ def create_app(
 
     @app.get("/api/items")
     def items(status: str | None = None, _: Principal = Depends(reader)) -> list[dict]:
-        state = system.state()
+        state = system.snapshot()
         rows = []
         for item_id, item in sorted(state.history.items.items()):
             if status and state.statuses.get(item_id) != status:
@@ -242,7 +242,7 @@ def create_app(
     def nonconformances(
         status: str | None = None, line_id: str | None = None, _: Principal = Depends(reader)
     ) -> list[dict]:
-        cards = system.state().cards.values()
+        cards = system.snapshot().cards.values()
         return [
             payloads.nc_summary(card)
             for card in sorted(cards, key=lambda card: card.first_detected_at, reverse=True)
@@ -252,7 +252,7 @@ def create_app(
 
     @app.get("/api/nonconformances/{nc_id}")
     def nonconformance(nc_id: str, user: Principal = Depends(reader)) -> dict:
-        card = system.state().cards.get(nc_id)
+        card = system.snapshot().cards.get(nc_id)
         if card is None:
             raise HTTPException(404, f"несоответствие {nc_id} не найдено")
         return payloads.nc_card(card, system, user)
@@ -270,11 +270,11 @@ def create_app(
 
     @app.get("/api/metrics")
     def metrics(_: Principal = Depends(reader)) -> dict:
-        return {**system.state().metrics, "ingest": system.ingest_summary()}
+        return {**system.snapshot().metrics, "ingest": system.ingest_summary()}
 
     @app.get("/api/quarantine")
     def quarantine(_: Principal = Depends(reader)) -> list[dict]:
-        return system.state().quarantine
+        return system.snapshot().quarantine
 
     # --- защита ---------------------------------------------------------------------
 
@@ -355,7 +355,7 @@ def create_app(
     def export_ocel(user: Principal = Depends(principal)) -> JSONResponse:
         system.security.authorize(user, "export", "export_ocel")
         return JSONResponse(
-            ocel.export(system.state()),
+            ocel.export(system.snapshot()),
             headers={"Content-Disposition": 'attachment; filename="zero-defect.ocel.json"'},
         )
 
@@ -377,6 +377,7 @@ def create_app(
         return system.telemetry.snapshot()
 
     lines_routes.register(app, system, lines, emulator, principal, reader)
+    admin_routes.register(app, system, lines, principal)
 
     # --- интерфейс ------------------------------------------------------------------
 
@@ -387,6 +388,12 @@ def create_app(
     def index() -> HTMLResponse:
         page = STATIC_DIR / "index.html"
         return HTMLResponse(page.read_text(encoding="utf-8"))
+
+    @app.get("/emulator", response_class=HTMLResponse)
+    def emulator_console() -> HTMLResponse:
+        """Пульт эмулятора — отдельная страница: эмуляция линии вне самой системы."""
+
+        return HTMLResponse((STATIC_DIR / "emulator.html").read_text(encoding="utf-8"))
 
     return app
 

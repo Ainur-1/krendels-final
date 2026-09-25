@@ -29,9 +29,11 @@ from zero_defect.lines.views import (
     economics,
     item_path,
     live_view,
+    plant_card,
     stage_items,
     stage_stats,
     stage_table,
+    timeline,
 )
 from zero_defect.quality.nonconformance import CONFIRMED_STATUSES
 from zero_defect.security.auth import Principal
@@ -71,6 +73,111 @@ class LineSpec(BaseModel):
     takt_min: float = Field(gt=0, le=600)
     steps: list[StepSpec] = Field(min_length=1, max_length=40)
     economics: dict = {}
+
+
+class GraphNodeSpec(BaseModel):
+    """Блок редактора линии: этап со своими параметрами и положением на холсте."""
+
+    node_id: str = Field(pattern="^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
+    title: str = Field(min_length=1, max_length=120)
+    kind: str = Field(pattern="^(operation|inspection)$")
+    x: float = 0
+    y: float = 0
+    duration_min: float = Field(gt=0, le=600)
+    defect_rate_pct: float = Field(default=0, ge=0, le=100)
+    defect_types: list[str] = []
+    rework_types: list[str] = []
+    equipment_id: str | None = None
+    operators: list[str] = []
+    checkpoint_kind: str | None = Field(default=None, pattern="^(incoming|after_operation|final)$")
+    item_type_id: str | None = None
+    origin: str = Field(default="manufactured", pattern="^(manufactured|purchased)$")
+    output_type: str | None = None
+
+
+class GraphSpec(BaseModel):
+    """Линия, собранная в редакторе из блоков и связей."""
+
+    line_id: str = Field(pattern="^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+    title: str = Field(min_length=1, max_length=160)
+    product_type_id: str = Field(pattern="^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    description: str = ""
+    takt_min: float = Field(gt=0, le=600)
+    nodes: list[GraphNodeSpec] = Field(min_length=1, max_length=60)
+    edges: list[tuple[str, str]] = []
+    economics: dict = {}
+
+
+class RunSpec(BaseModel):
+    """Прогон на существующей линии, настроенный в пульте эмулятора."""
+
+    items: int = Field(ge=1, le=200)
+    duration_s: float = Field(default=60, ge=10, le=900)
+    seed: int = 1
+    defect_rates_pct: dict[str, float] = {}
+    defects: list[dict] = []
+
+
+def graph_to_config(spec: GraphSpec) -> LineConfig:
+    """Граф из редактора → конфигурация линии. Идентификаторы участков выводятся сами."""
+
+    incoming = {target for _, target in spec.edges}
+    outgoing = {source for source, _ in spec.edges}
+    nodes = []
+    for block in spec.nodes:
+        is_source = block.node_id not in incoming
+        is_sink = block.node_id not in outgoing
+        merges = sum(1 for _, target in spec.edges if target == block.node_id) > 1
+        checkpoint_kind = None
+        if block.kind == "inspection":
+            checkpoint_kind = block.checkpoint_kind or (
+                "incoming" if is_source else "final" if is_sink else "after_operation"
+            )
+        nodes.append(
+            Node(
+                node_id=block.node_id,
+                title=block.title,
+                kind=block.kind,
+                station_id=f"ST-{block.node_id}",
+                x=block.x,
+                y=block.y,
+                duration_s=block.duration_min * 60,
+                operation_id=f"OP-{block.node_id}" if block.kind == "operation" else None,
+                equipment_id=(block.equipment_id or f"EQ-{block.node_id}")
+                if block.kind == "operation"
+                else None,
+                operators=block.operators
+                or ([f"OP-{block.node_id}"] if block.kind == "operation" else []),
+                assembly=block.kind == "operation" and merges,
+                output_type=(block.output_type or spec.product_type_id) if merges else None,
+                checkpoint_id=f"CP-{block.node_id}" if block.kind == "inspection" else None,
+                checkpoint_kind=checkpoint_kind,
+                item_type_id=(block.item_type_id or spec.product_type_id) if is_source else None,
+                origin=block.origin,
+                defect_rate=block.defect_rate_pct / 100,
+                defect_types=[code.strip().upper() for code in block.defect_types if code.strip()],
+                quality_issue_rate=0.02 if block.kind == "inspection" else 0.0,
+                rework_types=[code.strip().upper() for code in block.rework_types if code.strip()],
+            )
+        )
+    allowed = {
+        "item_value_rub",
+        "rework_cost_rub",
+        "scrap_cost_rub",
+        "hour_cost_rub",
+        "shift_hours",
+    }
+    params = {key: float(value) for key, value in spec.economics.items() if key in allowed}
+    return LineConfig(
+        line_id=spec.line_id,
+        title=spec.title,
+        product_type_id=spec.product_type_id,
+        description=spec.description,
+        nodes=nodes,
+        edges=[tuple(edge) for edge in spec.edges],
+        takt_s=spec.takt_min * 60,
+        economics=Economics(**params, note="Параметры заданы в редакторе линии."),
+    )
 
 
 def spec_to_config(spec: LineSpec) -> LineConfig:
@@ -141,21 +248,31 @@ class IndexCache:
         self.system = system
         self.lines = lines
         self._lock = threading.Lock()
-        self._key: tuple | None = None
-        self._indexes: dict[str, LineIndex] = {}
+        self._cache: dict[tuple, LineIndex] = {}
 
-    def get(self, line_id: str) -> tuple[LineIndex, object]:
-        state = self.system.state()
+    def get(self, line_id: str, at: str | None = None) -> tuple[LineIndex, object]:
+        state = self.system.state_at(_moment(at)) if at else self.system.snapshot()
         config = self.lines.get(line_id)
         if config is None:
             raise HTTPException(404, f"линия {line_id} не найдена")
+        key = (id(state), line_id, config.version)
         with self._lock:
-            key = (id(state), tuple((c.line_id, c.version) for c in self.lines.all()))
-            if key != self._key:
-                self._key, self._indexes = key, {}
-            if line_id not in self._indexes:
-                self._indexes[line_id] = build_index(config, state)
-            return self._indexes[line_id], state
+            index = self._cache.get(key)
+            if index is None:
+                if len(self._cache) > 24:
+                    self._cache.clear()
+                index = self._cache[key] = build_index(config, state)
+            return index, state
+
+
+def _moment(at: str) -> datetime:
+    try:
+        moment = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise HTTPException(422, f"неверный момент времени: {at}") from error
+    if moment.tzinfo is None:
+        raise HTTPException(422, "момент времени должен быть с часовым поясом")
+    return moment
 
 
 def _filters(
@@ -235,33 +352,35 @@ def register(
         return {"line_id": saved.line_id, "version": saved.version}
 
     @app.get("/api/lines/{line_id}/live")
-    def line_live(line_id: str, _: Principal = Depends(reader)) -> dict:
-        index, state = cache.get(line_id)
+    def line_live(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
+        index, state = cache.get(line_id, at)
         return {**live_view(index, state), "emulation": emulator.status(line_id)}
 
     @app.get("/api/lines/{line_id}/stages")
     def stages(
         line_id: str,
+        at: str | None = None,
         item_type: str | None = None,
         since: str | None = None,
         until: str | None = None,
         shift: str | None = None,
         _: Principal = Depends(reader),
     ) -> list[dict]:
-        index, state = cache.get(line_id)
+        index, state = cache.get(line_id, at)
         return stage_table(index, state, system.settings, _filters(item_type, since, until, shift))
 
     @app.get("/api/lines/{line_id}/stages/{node_id}")
     def stage(
         line_id: str,
         node_id: str,
+        at: str | None = None,
         item_type: str | None = None,
         since: str | None = None,
         until: str | None = None,
         shift: str | None = None,
         _: Principal = Depends(reader),
     ) -> dict:
-        index, state = cache.get(line_id)
+        index, state = cache.get(line_id, at)
         try:
             node = index.config.node(node_id)
         except KeyError as error:
@@ -301,10 +420,10 @@ def register(
         return economics(index, state)
 
     @app.get("/api/lines/{line_id}/overview")
-    def overview(line_id: str, _: Principal = Depends(reader)) -> dict:
+    def overview(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
         """Сводка для панели роли: у каждой роли своё «в первую очередь»."""
 
-        index, state = cache.get(line_id)
+        index, state = cache.get(line_id, at)
         history = state.history
         items = [item_id for item_id, line in index.item_line.items() if line == line_id]
         cards = [state.cards[nc] for nc in index.detected_at]
@@ -380,6 +499,7 @@ def register(
     @app.get("/api/lines/{line_id}/items")
     def line_items(
         line_id: str,
+        at: str | None = None,
         item_type: str | None = None,
         status: str | None = None,
         stage: str | None = None,
@@ -389,7 +509,7 @@ def register(
     ) -> dict:
         """Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру."""
 
-        index, state = cache.get(line_id)
+        index, state = cache.get(line_id, at)
         history = state.history
         rows = []
         for item_id, line in index.item_line.items():
@@ -440,8 +560,8 @@ def register(
         }
 
     @app.get("/api/items/{item_id}/path")
-    def path(item_id: str, _: Principal = Depends(reader)) -> dict:
-        state = system.state()
+    def path(item_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
+        state = system.state_at(_moment(at)) if at else system.snapshot()
         item = state.history.items.get(item_id)
         if item is None:
             raise HTTPException(404, f"изделие {item_id} не найдено")
@@ -450,7 +570,7 @@ def register(
         line_id = line_id or (parent.line_id if parent else None)
         if not line_id or lines.get(line_id) is None:
             raise HTTPException(404, "изделие не относится ни к одной линии")
-        index, state = cache.get(line_id)
+        index, state = cache.get(line_id, at)
         return item_path(index, item_id, state)
 
     @app.post("/api/lines/{line_id}/emulation")
@@ -521,5 +641,89 @@ def register(
         except KeyError as error:
             raise HTTPException(404, f"этап {request.node_id} не найден") from error
         return emulator.inject(line_id, request.node_id, request.kind)
+
+    @app.get("/api/plant")
+    def plant(at: str | None = None, _: Principal = Depends(reader)) -> dict:
+        """Обзор производства: все линии и изделия, которые они выпускают."""
+
+        cards = []
+        for config in lines.all():
+            index, state = cache.get(config.line_id, at)
+            cards.append({**plant_card(index, state), "emulation": emulator.status(config.line_id)})
+        products: dict[str, list[str]] = {}
+        for config in lines.all():
+            for item_type in config.item_types():
+                products.setdefault(item_type, []).append(config.line_id)
+        return {
+            "lines": cards,
+            "products": [
+                {"item_type": key, "lines": value} for key, value in sorted(products.items())
+            ],
+        }
+
+    @app.get("/api/lines/{line_id}/timeline")
+    def line_timeline(line_id: str, _: Principal = Depends(reader)) -> dict:
+        index, state = cache.get(line_id)
+        return timeline(index, state)
+
+    @app.post("/api/lines/graph")
+    def create_graph(spec: GraphSpec, user: Principal = Depends(manager)) -> dict:
+        system.security.authorize(user, "line_manage", "line_create", {"line_id": spec.line_id})
+        if lines.get(spec.line_id) is not None:
+            raise HTTPException(409, f"линия {spec.line_id} уже есть")
+        try:
+            config = lines.save(graph_to_config(spec), user.user_id)
+        except LineError as error:
+            raise HTTPException(422, str(error)) from error
+        return {"line_id": config.line_id, "version": config.version}
+
+    @app.put("/api/lines/{line_id}/graph")
+    def update_graph(line_id: str, spec: GraphSpec, user: Principal = Depends(manager)) -> dict:
+        system.security.authorize(user, "line_manage", "line_update", {"line_id": line_id})
+        if spec.line_id != line_id or lines.get(line_id) is None:
+            raise HTTPException(404, f"линия {line_id} не найдена")
+        try:
+            config = lines.save(graph_to_config(spec), user.user_id)
+        except LineError as error:
+            raise HTTPException(422, str(error)) from error
+        return {"line_id": config.line_id, "version": config.version}
+
+    @app.post("/api/lines/{line_id}/runs")
+    def start_run(line_id: str, spec: RunSpec, user: Principal = Depends(manager)) -> dict:
+        """Прогон на существующей линии: данные контракта вбиваются в пульте эмулятора."""
+
+        system.security.authorize(
+            user, "emulate", "run_start", {"line_id": line_id, "items": spec.items}
+        )
+        config = lines.get(line_id)
+        if config is None:
+            raise HTTPException(404, f"линия {line_id} не найдена")
+        run_config = LineConfig.from_dict(json.loads(config.to_json()))
+        run_config.version = config.version
+        for node_id, rate in spec.defect_rates_pct.items():
+            try:
+                run_config.node(node_id).defect_rate = max(0.0, min(float(rate), 100.0)) / 100
+            except KeyError as error:
+                raise HTTPException(422, f"этап {node_id} не найден") from error
+        forced: dict[int, dict[str, str]] = {}
+        for entry in spec.defects:
+            node_id, item, kind = (
+                entry.get("node_id"),
+                int(entry.get("item", 0)),
+                entry.get("kind", "defect"),
+            )
+            if (
+                node_id not in {node.node_id for node in run_config.nodes}
+                or not 1 <= item <= spec.items
+            ):
+                raise HTTPException(422, f"дефект указан вне линии или прогона: {entry}")
+            if kind not in ("defect", "deviation"):
+                raise HTTPException(422, f"вид {kind!r} неизвестен")
+            forced.setdefault(item, {})[node_id] = kind
+        speed = speed_for(run_config, spec.items, spec.duration_s)
+        status = emulator.start_run(
+            run_config, spec.items, speed, spec.duration_s, forced, spec.seed
+        )
+        return {"line_id": line_id, "speed": round(speed, 1), "emulation": status}
 
     return cache

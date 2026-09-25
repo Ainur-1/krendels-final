@@ -68,7 +68,7 @@
             "type": "object"
           },
           "run": {
-            "$ref": "#/components/schemas/RunSpec"
+            "$ref": "#/components/schemas/zero_defect__lines__flow__RunSpec"
           }
         },
         "required": [
@@ -105,6 +105,207 @@
           "stage"
         ],
         "title": "ForcedDefect",
+        "type": "object"
+      },
+      "GraphNodeSpec": {
+        "description": "Блок редактора линии: этап со своими параметрами и положением на холсте.",
+        "properties": {
+          "checkpoint_kind": {
+            "anyOf": [
+              {
+                "pattern": "^(incoming|after_operation|final)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Kind"
+          },
+          "defect_rate_pct": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Defect Rate Pct",
+            "type": "number"
+          },
+          "defect_types": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Defect Types",
+            "type": "array"
+          },
+          "duration_min": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 600.0,
+            "title": "Duration Min",
+            "type": "number"
+          },
+          "equipment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Id"
+          },
+          "item_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Type Id"
+          },
+          "kind": {
+            "pattern": "^(operation|inspection)$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$",
+            "title": "Node Id",
+            "type": "string"
+          },
+          "operators": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Operators",
+            "type": "array"
+          },
+          "origin": {
+            "default": "manufactured",
+            "pattern": "^(manufactured|purchased)$",
+            "title": "Origin",
+            "type": "string"
+          },
+          "output_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Type"
+          },
+          "rework_types": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Rework Types",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "x": {
+            "default": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "default": 0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "node_id",
+          "title",
+          "kind",
+          "duration_min"
+        ],
+        "title": "GraphNodeSpec",
+        "type": "object"
+      },
+      "GraphSpec": {
+        "description": "Линия, собранная в редакторе из блоков и связей.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "economics": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Economics",
+            "type": "object"
+          },
+          "edges": {
+            "default": [],
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "line_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$",
+            "title": "Line Id",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeSpec"
+            },
+            "maxItems": 60,
+            "minItems": 1,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "product_type_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Product Type Id",
+            "type": "string"
+          },
+          "takt_min": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 600.0,
+            "title": "Takt Min",
+            "type": "number"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_id",
+          "title",
+          "product_type_id",
+          "takt_min",
+          "nodes"
+        ],
+        "title": "GraphSpec",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -242,41 +443,6 @@
         "title": "RotateRequest",
         "type": "object"
       },
-      "RunSpec": {
-        "properties": {
-          "defects": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ForcedDefect"
-            },
-            "title": "Defects",
-            "type": "array"
-          },
-          "duration_s": {
-            "default": 60,
-            "maximum": 900.0,
-            "minimum": 10.0,
-            "title": "Duration S",
-            "type": "number"
-          },
-          "items": {
-            "maximum": 200.0,
-            "minimum": 1.0,
-            "title": "Items",
-            "type": "integer"
-          },
-          "seed": {
-            "default": 1,
-            "title": "Seed",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "title": "RunSpec",
-        "type": "object"
-      },
       "StepSpec": {
         "description": "Этап новой линии, как его задаёт главная роль в редакторе.",
         "properties": {
@@ -398,6 +564,86 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "zero_defect__lines__flow__RunSpec": {
+        "properties": {
+          "defects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ForcedDefect"
+            },
+            "title": "Defects",
+            "type": "array"
+          },
+          "duration_s": {
+            "default": 60,
+            "maximum": 900.0,
+            "minimum": 10.0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "items": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Items",
+            "type": "integer"
+          },
+          "seed": {
+            "default": 1,
+            "title": "Seed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RunSpec",
+        "type": "object"
+      },
+      "zero_defect__serving__lines_routes__RunSpec": {
+        "description": "Прогон на существующей линии, настроенный в пульте эмулятора.",
+        "properties": {
+          "defect_rates_pct": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "default": {},
+            "title": "Defect Rates Pct",
+            "type": "object"
+          },
+          "defects": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Defects",
+            "type": "array"
+          },
+          "duration_s": {
+            "default": 60,
+            "maximum": 900.0,
+            "minimum": 10.0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "items": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Items",
+            "type": "integer"
+          },
+          "seed": {
+            "default": 1,
+            "title": "Seed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RunSpec",
+        "type": "object"
       }
     }
   },
@@ -424,6 +670,232 @@
           }
         },
         "summary": "Index"
+      }
+    },
+    "/api/admin/db": {
+      "get": {
+        "operationId": "database_api_admin_db_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "table",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Table"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Database Api Admin Db Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Database"
+      }
+    },
+    "/api/admin/defects": {
+      "get": {
+        "description": "Справочник дефектов: название, где возникает по конфигурации, сколько найдено.",
+        "operationId": "defects_api_admin_defects_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Defects Api Admin Defects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Defects"
+      }
+    },
+    "/api/admin/equipment": {
+      "get": {
+        "description": "Оборудование линий: на каком этапе стоит, кто работает, последнее состояние.",
+        "operationId": "equipment_api_admin_equipment_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Equipment Api Admin Equipment Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment"
+      }
+    },
+    "/api/admin/roles": {
+      "get": {
+        "operationId": "roles_api_admin_roles_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Roles Api Admin Roles Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Roles"
       }
     },
     "/api/admin/users": {
@@ -1264,6 +1736,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -1566,6 +2054,64 @@
           }
         },
         "summary": "Create Line"
+      }
+    },
+    "/api/lines/graph": {
+      "post": {
+        "operationId": "create_graph_api_lines_graph_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Graph Api Lines Graph Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Graph"
       }
     },
     "/api/lines/{line_id}": {
@@ -1883,6 +2429,73 @@
         "summary": "Inject"
       }
     },
+    "/api/lines/{line_id}/graph": {
+      "put": {
+        "operationId": "update_graph_api_lines__line_id__graph_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Graph Api Lines  Line Id  Graph Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Graph"
+      }
+    },
     "/api/lines/{line_id}/items": {
       "get": {
         "description": "Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру.",
@@ -1895,6 +2508,22 @@
             "schema": {
               "title": "Line Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
             }
           },
           {
@@ -2029,6 +2658,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -2087,6 +2732,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -2130,6 +2791,74 @@
         "summary": "Overview"
       }
     },
+    "/api/lines/{line_id}/runs": {
+      "post": {
+        "description": "Прогон на существующей линии: данные контракта вбиваются в пульте эмулятора.",
+        "operationId": "start_run_api_lines__line_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/zero_defect__serving__lines_routes__RunSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Run Api Lines  Line Id  Runs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Run"
+      }
+    },
     "/api/lines/{line_id}/stages": {
       "get": {
         "operationId": "stages_api_lines__line_id__stages_get",
@@ -2141,6 +2870,22 @@
             "schema": {
               "title": "Line Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
             }
           },
           {
@@ -2278,6 +3023,22 @@
           },
           {
             "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
+            "in": "query",
             "name": "item_type",
             "required": false,
             "schema": {
@@ -2382,6 +3143,63 @@
           }
         },
         "summary": "Stage"
+      }
+    },
+    "/api/lines/{line_id}/timeline": {
+      "get": {
+        "operationId": "line_timeline_api_lines__line_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Line Timeline Api Lines  Line Id  Timeline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Line Timeline"
       }
     },
     "/api/me": {
@@ -2735,6 +3553,71 @@
         "summary": "Ops Metrics"
       }
     },
+    "/api/plant": {
+      "get": {
+        "description": "Обзор производства: все линии и изделия, которые они выпускают.",
+        "operationId": "plant_api_plant_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Plant Api Plant Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plant"
+      }
+    },
     "/api/quarantine": {
       "get": {
         "operationId": "quarantine_api_quarantine_get",
@@ -2807,6 +3690,25 @@
           }
         },
         "summary": "Users"
+      }
+    },
+    "/emulator": {
+      "get": {
+        "description": "Пульт эмулятора — отдельная страница: эмуляция линии вне самой системы.",
+        "operationId": "emulator_console_emulator_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Emulator Console"
       }
     }
   }

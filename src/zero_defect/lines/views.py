@@ -430,18 +430,31 @@ def item_path(index: LineIndex, item_id: str, state: State) -> dict | None:
     }
 
 
+def _line_events(index: LineIndex, state: State) -> list:
+    line_id = index.config.line_id
+    return [
+        event
+        for event in state.history.events
+        if (event.line_id or index.item_line.get(event.item_id)) == line_id
+    ]
+
+
 def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
-    """Состояние графа линии: этапы с тревогами и изделия в работе."""
+    """Состояние графа линии: этапы с тревогами, изделия и их статусы у каждого этапа.
+
+    Изделие отнесено к этапу, на котором было в последний раз. У этапа считается, сколько
+    изделий в каком статусе сейчас у него стоит, — так интерфейс рисует счётчики, а не
+    вереницу точек. Отдельный список изделий нужен, чтобы анимировать переход изделия
+    от этапа к этапу. Состояние бывает и на прошедший момент: тогда state построен из
+    событий до этого момента, и «сейчас» — это он.
+    """
 
     config = index.config
     history = state.history
-    line_events = [
-        event
-        for event in history.events
-        if (event.line_id or index.item_line.get(event.item_id)) == config.line_id
-    ]
+    line_events = _line_events(index, state)
     latest = max((event.occurred_at for event in line_events), default=None)
     items = []
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     if latest is not None:
         recent: dict[str, datetime] = {}
         for event in line_events:
@@ -449,7 +462,7 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 recent[event.item_id] = max(
                     recent.get(event.item_id, event.occurred_at), event.occurred_at
                 )
-        for item_id, moment in sorted(recent.items(), key=lambda pair: pair[1], reverse=True)[:40]:
+        for item_id, moment in sorted(recent.items(), key=lambda pair: pair[1], reverse=True)[:250]:
             item = history.items.get(item_id)
             if item is None or (item.parent_id and item.parent_id in recent):
                 continue
@@ -457,28 +470,31 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
             processing = any(
                 history.runs[run_id].status == "in_progress" for run_id in item.run_ids
             )
+            status = state.statuses.get(item_id) or "in_progress"
             items.append(
                 {
                     "item_id": item_id,
                     "item_type": item.item_type_id,
                     "node_id": node,
-                    "status": state.statuses.get(item_id),
+                    "status": status,
                     "processing": processing,
                     "last_at": moment.isoformat(),
                 }
             )
+            counts[node or "__entry"][status] += 1
     nodes = []
     for node in config.nodes:
         detected = [nc for nc, where in index.detected_at.items() if where == node.node_id]
         open_here = [nc for nc in detected if state.cards[nc].is_open]
         originated = [nc for nc, (where, _) in index.origins.items() if node.node_id in where]
+        open_origin = [nc for nc in originated if state.cards[nc].is_open]
         machine_state = None
         if node.equipment_id and history.machine_events.get(node.equipment_id):
             machine_state = history.machine_events[node.equipment_id][-1].machine_state
         alarm = (
             "alarm"
             if open_here or machine_state in MACHINE_DEVIATIONS
-            else ("warning" if any(state.cards[nc].is_open for nc in originated) else "ok")
+            else ("warning" if open_origin else "ok")
         )
         nodes.append(
             {
@@ -491,6 +507,7 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 "equipment_id": node.equipment_id,
                 "checkpoint_kind": node.checkpoint_kind,
                 "assembly": node.assembly,
+                "duration_s": node.duration_s,
                 "machine_state": machine_state,
                 "state": alarm,
                 "passed": len(index.runs.get(node.node_id, []))
@@ -498,9 +515,8 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 "open_detections": len(open_here),
                 "detections": len(detected),
                 "originated": len(originated),
-                "in_work": sum(
-                    1 for entry in items if entry["node_id"] == node.node_id and entry["processing"]
-                ),
+                "open_originated": len(open_origin),
+                "counts": dict(counts.get(node.node_id, {})),
             }
         )
     alarms = sorted(
@@ -523,11 +539,111 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
         "line_id": config.line_id,
         "title": config.title,
         "version": config.version,
+        "product_type_id": config.product_type_id,
+        "item_types": config.item_types(),
         "nodes": nodes,
         "edges": [list(edge) for edge in config.edges],
         "items": items,
+        "entry_counts": dict(counts.get("__entry", {})),
         "alarms": alarms,
         "latest_event_at": latest.isoformat() if latest else None,
+    }
+
+
+def timeline(index: LineIndex, state: State) -> dict:
+    """Границы шкалы времени и отметки на ней: обнаружения, решения, отклонения станков."""
+
+    events = _line_events(index, state)
+    if not events:
+        return {"start": None, "end": None, "markers": []}
+    markers = []
+    for nc, where in index.detected_at.items():
+        card = state.cards[nc]
+        markers.append(
+            {
+                "at": card.first_detected_at.isoformat(),
+                "kind": "detected",
+                "nc_id": nc,
+                "node_id": where,
+                "item_id": card.item_id,
+                "defect_type": card.defect_type,
+                "status": card.status,
+            }
+        )
+        for decision in card.decisions:
+            markers.append(
+                {
+                    "at": decision.decided_at.isoformat(),
+                    "kind": "decision",
+                    "nc_id": nc,
+                    "node_id": where,
+                    "action": decision.action,
+                }
+            )
+    for node in index.config.nodes:
+        for event in state.history.machine_events.get(node.equipment_id or "", []):
+            if event.machine_state in MACHINE_DEVIATIONS:
+                markers.append(
+                    {
+                        "at": event.occurred_at.isoformat(),
+                        "kind": "deviation",
+                        "node_id": node.node_id,
+                        "equipment_id": node.equipment_id,
+                    }
+                )
+    markers.sort(key=lambda marker: marker["at"])
+    return {
+        "start": events[0].occurred_at.isoformat(),
+        "end": events[-1].occurred_at.isoformat(),
+        "markers": markers[-400:],
+    }
+
+
+def plant_card(index: LineIndex, state: State) -> dict:
+    """Карточка линии для обзора производства."""
+
+    config = index.config
+    items = [item_id for item_id, line in index.item_line.items() if line == config.line_id]
+    statuses = Counter(state.statuses.get(item_id) for item_id in items)
+    open_cards = [nc for nc in index.detected_at if state.cards[nc].is_open]
+    runs = [run for node_runs in index.runs.values() for run in node_runs]
+    products = [
+        item_id for item_id in items if index.item_types.get(item_id) == config.product_type_id
+    ]
+    finals = [
+        item_id
+        for item_id in products
+        if any(
+            obs.event.checkpoint_kind == "final"
+            for obs in state.history.items[item_id].observations
+        )
+    ]
+    good = [item_id for item_id in finals if state.statuses.get(item_id) == "conforming"]
+    events = _line_events(index, state)
+    return {
+        "line_id": config.line_id,
+        "title": config.title,
+        "product_type_id": config.product_type_id,
+        "item_types": config.item_types(),
+        "stages": len(config.nodes),
+        "nodes": [
+            {
+                "node_id": node.node_id,
+                "x": node.x,
+                "y": node.y,
+                "kind": node.kind,
+                "title": node.title,
+            }
+            for node in config.nodes
+        ],
+        "edges": [list(edge) for edge in config.edges],
+        "alarm_nodes": sorted({index.detected_at[nc] for nc in open_cards}),
+        "items": len(items),
+        "statuses": dict(statuses),
+        "in_progress_runs": sum(1 for run in runs if run.status == "in_progress"),
+        "open_nonconformances": len(open_cards),
+        "final_yield": round(len(good) / len(finals), 3) if finals else None,
+        "latest_event_at": events[-1].occurred_at.isoformat() if events else None,
     }
 
 

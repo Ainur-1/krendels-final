@@ -157,6 +157,9 @@ def test_flow_upload_runs_to_completion(api):
     now = time.time()
     for step in range(60):
         emulator.tick(now + step)
+    # Интерфейс читает снимок не старше секунды: пересборка на каждый опрос и давала
+    # лаги. Ждём, пока снимок, построенный до прогона, устареет.
+    time.sleep(1.1)
     status = api.get("/api/lines/DEMO/live", headers=headers).json()["emulation"]
     assert status["run"]["finished"] is True
     stages = {
@@ -220,3 +223,130 @@ def test_scenarios_on_postgres(name, database_url, monkeypatch):
     )
     mismatches, _ = check(name)
     assert mismatches == []
+
+
+GRAPH = {
+    "line_id": "LG",
+    "title": "Сборка из блоков",
+    "product_type_id": "ASM-G",
+    "takt_min": 5,
+    "nodes": [
+        {
+            "node_id": "A",
+            "title": "Вход корпуса",
+            "kind": "inspection",
+            "x": 0,
+            "y": 0,
+            "duration_min": 1,
+            "item_type_id": "BODY-G",
+        },
+        {
+            "node_id": "B",
+            "title": "Вход крышки",
+            "kind": "inspection",
+            "x": 0,
+            "y": 200,
+            "duration_min": 1,
+            "item_type_id": "LID-G",
+            "origin": "purchased",
+        },
+        {
+            "node_id": "C",
+            "title": "Сборка",
+            "kind": "operation",
+            "x": 300,
+            "y": 100,
+            "duration_min": 4,
+            "defect_types": ["DENT"],
+        },
+        {
+            "node_id": "D",
+            "title": "ОТК",
+            "kind": "inspection",
+            "x": 600,
+            "y": 100,
+            "duration_min": 2,
+        },
+    ],
+    "edges": [["A", "C"], ["B", "C"], ["C", "D"]],
+}
+
+
+def test_graph_from_blocks_builds_an_assembly(api):
+    headers = login(api, "head-01")
+    assert api.post("/api/lines/graph", json=GRAPH, headers=headers).status_code == 200
+    config = api.get("/api/lines/LG", headers=headers).json()
+    nodes = {node["node_id"]: node for node in config["nodes"]}
+    assert nodes["C"]["assembly"] is True and nodes["C"]["output_type"] == "ASM-G"
+    assert nodes["A"]["checkpoint_kind"] == "incoming" and nodes["D"]["checkpoint_kind"] == "final"
+    cyclic = {**GRAPH, "edges": GRAPH["edges"] + [["D", "A"]]}
+    assert api.put("/api/lines/LG/graph", json=cyclic, headers=headers).status_code == 422
+
+
+def test_configured_run_on_existing_line(api):
+    headers = login(api, "master-01")
+    body = {
+        "items": 3,
+        "duration_s": 10,
+        "seed": 2,
+        "defect_rates_pct": {"L2-BEND": 0},
+        "defects": [{"item": 2, "node_id": "L2-BEND", "kind": "defect"}],
+    }
+    started = api.post("/api/lines/L2/runs", json=body, headers=headers).json()
+    assert started["emulation"]["run"]["items"] == 3
+    bad = {**body, "defects": [{"item": 9, "node_id": "L2-BEND"}]}
+    assert api.post("/api/lines/L2/runs", json=bad, headers=headers).status_code == 422
+    assert (
+        api.post("/api/lines/L2/runs", json=body, headers=login(api, "ctrl-01")).status_code == 403
+    )
+
+
+def test_state_at_moment_hides_the_future(api):
+    headers = login(api, "ctrl-01")
+    timeline = api.get("/api/lines/L1/timeline", headers=headers).json()
+    detected = [m for m in timeline["markers"] if m["kind"] == "detected"]
+    assert detected, "в демонстрационной базе должны быть обнаружения"
+    first = min(detected, key=lambda m: m["at"])
+    before = datetime.fromisoformat(first["at"]).timestamp() - 1
+    moment = datetime.fromtimestamp(before, UTC).isoformat()
+    past = api.get("/api/lines/L1/overview", params={"at": moment}, headers=headers).json()
+    assert first["nc_id"] not in {card["nc_id"] for card in past["queue"]}
+    live = api.get("/api/lines/L1/live", params={"at": moment}, headers=headers).json()
+    assert live["latest_event_at"] <= first["at"]
+
+
+def test_plant_overview_lists_lines_and_products(api):
+    data = api.get("/api/plant", headers=login(api, "master-01")).json()
+    assert {line["line_id"] for line in data["lines"]} >= {"L1", "L2"}
+    products = {entry["item_type"]: entry["lines"] for entry in data["products"]}
+    assert products["UNIT-U1"] == ["L1"]
+
+
+def test_live_view_counts_statuses_per_stage(api):
+    live = api.get("/api/lines/L1/live", headers=login(api, "master-01")).json()
+    total = sum(sum(node["counts"].values()) for node in live["nodes"])
+    assert total + sum(live["entry_counts"].values()) == len(live["items"])
+
+
+def test_admin_sees_database_without_secrets(api):
+    headers = login(api, "admin-01")
+    db = api.get("/api/admin/db", headers=headers).json()
+    ledger = next(table for table in db["tables"] if table["table"] == "ledger")
+    assert "ciphertext" not in ledger["columns"] and "ciphertext" in ledger["hidden"]
+    users = api.get("/api/admin/db", params={"table": "users"}, headers=headers).json()
+    assert all("password_hash" not in row for row in users["rows"])
+    roles = api.get("/api/admin/roles", headers=headers).json()
+    assert "decide" in roles["roles"]["controller"] and "decide" not in roles["roles"]["master"]
+    assert any(
+        row["code"] == "POROSITY" for row in api.get("/api/admin/defects", headers=headers).json()
+    )
+    assert any(
+        row["equipment_id"] == "WELD-01"
+        for row in api.get("/api/admin/equipment", headers=headers).json()
+    )
+    assert api.get("/api/admin/db", headers=login(api, "head-01")).status_code == 403
+
+
+def test_emulator_console_page_is_served(api):
+    page = api.get("/emulator")
+    assert page.status_code == 200 and "Пульт эмулятора" in page.text
