@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zero Defect</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.2.1">
+  <link rel="stylesheet" href="/static/styles.css?v=0.3.4">
 </head>
 <body>
   <section id="login" class="login hidden">
     <div class="login-box">
       <h1>Zero Defect</h1>
-      <p class="lead">Прослеживаемость изделия и разбор несоответствий на производственной линии. Выберите роль: у каждой роли свой экран с тем, что ей нужно в первую очередь.</p>
+      <p class="lead">Прослеживаемость изделия и разбор несоответствий на производстве. Выберите роль: у каждой роли свой экран с тем, что ей нужно в первую очередь.</p>
       <div id="role-cards" class="role-grid"></div>
       <form id="password-form" class="login-form">
         <label>Пользователь <input name="user_id" autocomplete="username" required></label>
@@ -23,49 +23,56 @@
   <div id="app" class="hidden">
     <header class="top">
       <div class="brand"><div class="logo">Z</div><b>Zero Defect</b></div>
-      <select id="line-select" aria-label="Линия"></select>
+      <button id="open-guide" class="btn small" title="Как пользоваться системой">Инструкция</button>
+      <nav id="crumbs" class="crumbs"></nav>
       <div id="top-actions" class="row"></div>
       <div class="grow"></div>
-      <label id="view-as-wrap" class="row muted hidden">смотреть как <select id="view-as"></select></label>
+      <label id="view-as-wrap" class="row muted small hidden" title="Показать экран глазами другой роли">как <select id="view-as"></select></label>
       <span id="user-chip" class="chip"></span>
-      <button id="logout" class="btn small">Выйти</button>
+      <button id="logout" class="btn small" title="Выйти">⏻</button>
     </header>
-    <main class="layout">
-      <aside class="col left">
-        <section id="guide" class="card guide"></section>
-        <section id="role-panel" class="card"></section>
-      </aside>
+
+    <section id="stages-drop" class="dropdown" aria-hidden="true">
+      <div class="dropdown-inner">
+        <div class="card-head"><h2>Этапы процесса</h2><div class="row">
+          <select id="f-type" aria-label="Тип изделия"></select>
+          <select id="f-shift" aria-label="Смена"><option value="">все смены</option><option value="S1">смена S1</option><option value="S2">смена S2</option></select>
+          <label class="muted">с <input id="f-since" type="datetime-local"></label>
+          <label class="muted">по <input id="f-until" type="datetime-local"></label>
+          <button id="stages-close" class="btn small">Скрыть ▲</button>
+        </div></div>
+        <div id="stages" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <main id="plant-view" class="plant hidden"></main>
+
+    <main id="line-view" class="line-layout hidden">
+      <aside id="role-panel" class="card area-left"></aside>
       <section class="card area-graph">
         <div class="graph-toolbar">
-          <div><b id="line-title"></b> <span id="emulation-state" class="muted"></span></div>
-          <div id="graph-controls" class="row"></div>
+          <div class="row"><b id="line-title"></b><span id="moment-badge"></span></div>
+          <div class="row">
+            <select id="product-filter" aria-label="Изделие"></select>
+            <button class="btn small" data-zoom="in" title="Приблизить">＋</button>
+            <button class="btn small" data-zoom="out" title="Отдалить">－</button>
+            <button class="btn small" data-zoom="fit" title="Вписать граф">⤢</button>
+          </div>
         </div>
-        <div id="run-progress" class="hidden" style="margin-bottom:8px"></div>
-        <div class="graph-wrap"><svg id="graph" class="graph" role="img" aria-label="Граф линии"></svg></div>
+        <div class="graph-wrap"><svg id="graph" class="graph" role="img" aria-label="Граф линии"></svg><div id="graph-tip" class="graph-tip hidden"></div></div>
         <div class="legend">
           <span><i style="background:var(--accent)"></i>в работе</span>
           <span><i style="background:var(--ok)"></i>годно</span>
           <span><i style="background:var(--bad)"></i>несоответствие</span>
           <span><i style="background:var(--warn)"></i>оценка невозможна</span>
-          <span>метки этапа: <b style="color:var(--bad)">красная</b> — обнаружено здесь и ждёт решения, <b style="color:var(--origin)">оранжевая</b> — возникло здесь</span>
+          <span>метки станка: <b style="color:var(--bad)">красная</b> — обнаружено здесь, <b style="color:var(--origin)">оранжевая</b> — возникло здесь; нажмите метку</span>
         </div>
       </section>
-      <section class="card area-stages">
-        <div class="card-head"><h2>Этапы процесса</h2><button id="open-items" class="btn small">Изделия линии</button></div>
-        <div class="filters-row">
-          <select id="f-type" aria-label="Тип изделия"></select>
-          <select id="f-shift" aria-label="Смена"><option value="">все смены</option><option value="S1">смена S1</option><option value="S2">смена S2</option></select>
-          <label class="muted">с <input id="f-since" type="datetime-local"></label>
-          <label class="muted">по <input id="f-until" type="datetime-local"></label>
-        </div>
-        <div id="stages" class="table-wrap"></div>
-      </section>
-      <aside class="col right area-context">
-        <section id="context" class="card"></section>
-      </aside>
+      <aside class="area-drawer"><section id="drawer" class="card"></section></aside>
+      <section id="timeline" class="card area-timeline"></section>
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/static/app.js?v=0.2.1"></script>
+  <script type="module" src="/static/app.js?v=0.3.4"></script>
 </body>
 </html>
