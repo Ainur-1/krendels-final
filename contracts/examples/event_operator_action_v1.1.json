@@ -1,0 +1,13 @@
+{
+  "event_id": "EV-000124",
+  "event_type": "operator_action",
+  "schema_version": "1.1",
+  "occurred_at": "2026-09-25T10:20:00+03:00",
+  "source_id": "opvision-01",
+  "operator_id": "OP-102",
+  "action_type": "tool_change",
+  "operation_run_id": "RUN-0302-W",
+  "station_id": "ST-WELD",
+  "shift_id": "S1",
+  "details": "замена сопла горелки"
+}

@@ -1,0 +1,758 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zero-defect.local/contracts/events/v1.1.schema.json",
+  "title": "ProductionEvent",
+  "description": "Событие производственной линии, контракт zd-events версии 1.1. Версия контракта не связана с версией анализирующего модуля (analyzer_version) и с версией приложения. Отличия от 1.0: необязательные shift_id и defects[].size_mm, новое значение tool_change в ActionType.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ItemRegistered"
+    },
+    {
+      "$ref": "#/$defs/ComponentLinked"
+    },
+    {
+      "$ref": "#/$defs/OperationStarted"
+    },
+    {
+      "$ref": "#/$defs/OperationPaused"
+    },
+    {
+      "$ref": "#/$defs/OperationResumed"
+    },
+    {
+      "$ref": "#/$defs/OperationFinished"
+    },
+    {
+      "$ref": "#/$defs/InspectionReported"
+    },
+    {
+      "$ref": "#/$defs/OperatorAction"
+    },
+    {
+      "$ref": "#/$defs/MachineState"
+    }
+  ],
+  "$defs": {
+    "SchemaVersion": {
+      "type": "string",
+      "const": "1.1",
+      "description": "Версия контракта сообщения."
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "Условный идентификатор объекта. Реальные персональные данные не передаются."
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Время в ISO 8601 с указанием смещения, например 2026-09-25T10:15:00+03:00."
+    },
+    "InspectionResult": {
+      "type": "string",
+      "enum": [
+        "defect_signs_found",
+        "no_defect_signs",
+        "not_assessable"
+      ],
+      "description": "Признаки дефекта обнаружены, не обнаружены либо оценка невозможна."
+    },
+    "CheckpointKind": {
+      "type": "string",
+      "enum": [
+        "incoming",
+        "before_operation",
+        "after_operation",
+        "final"
+      ],
+      "description": "Назначение контрольной точки в маршруте изделия."
+    },
+    "ObservationQuality": {
+      "type": "string",
+      "enum": [
+        "good",
+        "degraded",
+        "poor",
+        "unknown"
+      ],
+      "description": "Качество наблюдения по оценке внешнего анализатора."
+    },
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "minor",
+        "major",
+        "critical"
+      ],
+      "description": "Тяжесть дефекта, если анализатор её сообщает."
+    },
+    "DurationUnit": {
+      "type": "string",
+      "enum": [
+        "s",
+        "min",
+        "h"
+      ]
+    },
+    "DurationMeaning": {
+      "type": "string",
+      "enum": [
+        "active_processing",
+        "station_total",
+        "other"
+      ],
+      "description": "Что именно измеряет длительность: активную обработку, полное время на участке или иной интервал."
+    },
+    "ReportedDuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "unit",
+        "meaning"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit": {
+          "$ref": "#/$defs/DurationUnit"
+        },
+        "meaning": {
+          "$ref": "#/$defs/DurationMeaning"
+        }
+      }
+    },
+    "Defect": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "defect_type"
+      ],
+      "properties": {
+        "defect_type": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Код типа дефекта из справочника."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "component_item_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Компонент, на котором найден дефект."
+        },
+        "area": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Зона изделия или компонента."
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "size_mm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Размер признака дефекта по оценке анализатора, мм. Проектное предположение: требует калибровки камеры."
+        }
+      }
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "uri",
+        "kind"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "photo",
+            "video"
+          ]
+        },
+        "captured_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "checkpoint_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "OperationOutcome": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "aborted"
+      ]
+    },
+    "ActionType": {
+      "type": "string",
+      "enum": [
+        "mode_change",
+        "confirmation",
+        "check_skipped",
+        "manual_decision",
+        "tool_change",
+        "other"
+      ],
+      "description": "Действие оператора: изменение режима, подтверждение, пропуск проверки, ручное решение."
+    },
+    "MachineStateValue": {
+      "type": "string",
+      "enum": [
+        "running",
+        "idle",
+        "warning",
+        "deviation",
+        "stopped",
+        "maintenance"
+      ]
+    },
+    "ItemRegistered": {
+      "type": "object",
+      "description": "Экземпляр детали или изделия поступил на учёт: из задания, при приёмке или при запуске в производство.",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "item_id",
+        "item_type_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "item_registered"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Сквозной номер сообщения у источника; по разрывам в нём видны пропуски."
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "item_type_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "line_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "work_order_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "purchased",
+            "manufactured"
+          ],
+          "description": "Покупной компонент или изготовленный на предприятии."
+        }
+      }
+    },
+    "ComponentLinked": {
+      "type": "object",
+      "description": "Компонент установлен в сборку.",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "item_id",
+        "component_item_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "component_linked"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Сборка."
+        },
+        "component_item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "station_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "OperationStarted": {
+      "type": "object",
+      "description": "Начало конкретного выполнения операции. Повторное выполнение получает новый operation_run_id и ссылается на предыдущее через previous_run_id.",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "item_id",
+        "operation_run_id",
+        "operation_id",
+        "line_id",
+        "station_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "operation_started"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "item_type_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Операция техпроцесса; по ней сопоставляются сравнимые работы."
+        },
+        "line_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "station_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operator_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "equipment_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "previous_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "rework_reason": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "identification": {
+          "type": "string",
+          "enum": [
+            "reliable",
+            "unreliable"
+          ],
+          "description": "Надёжность идентификации изделия на участке."
+        },
+        "shift_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Смена по учёту источника. Если не передана, система определяет смену по расписанию сама."
+        }
+      }
+    },
+    "OperationPaused": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "operation_run_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "operation_paused"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "pause_reason": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "OperationResumed": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "operation_run_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "operation_resumed"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        }
+      }
+    },
+    "OperationFinished": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "item_id",
+        "operation_run_id"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "operation_finished"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "outcome": {
+          "$ref": "#/$defs/OperationOutcome"
+        },
+        "reported_duration": {
+          "$ref": "#/$defs/ReportedDuration"
+        }
+      }
+    },
+    "InspectionReported": {
+      "type": "object",
+      "description": "Результат уже выполненного внешнего анализа наблюдения (VisionQC или ручной контроль).",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "item_id",
+        "checkpoint_id",
+        "checkpoint_kind",
+        "inspection_result"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "inspection_reported"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "item_type_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "line_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "station_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "checkpoint_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "checkpoint_kind": {
+          "$ref": "#/$defs/CheckpointKind"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Операция, после которой выполнен контроль."
+        },
+        "inspection_result": {
+          "$ref": "#/$defs/InspectionResult"
+        },
+        "defects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Defect"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "observation_quality": {
+          "$ref": "#/$defs/ObservationQuality"
+        },
+        "analyzer_version": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "shift_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Смена по учёту источника. Если не передана, система определяет смену по расписанию сама."
+        }
+      }
+    },
+    "OperatorAction": {
+      "type": "object",
+      "description": "Действие оператора, сообщённое OperatorVision или терминалом участка.",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "operator_id",
+        "action_type"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "operator_action"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operator_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "action_type": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "item_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "operation_run_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "station_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "equipment_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "shift_id": {
+          "$ref": "#/$defs/Identifier",
+          "description": "Смена по учёту источника. Если не передана, система определяет смену по расписанию сама."
+        }
+      }
+    },
+    "MachineState": {
+      "type": "object",
+      "description": "Состояние, параметры, предупреждение или остановка оборудования (MachineLogs).",
+      "additionalProperties": true,
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "occurred_at",
+        "source_id",
+        "equipment_id",
+        "machine_state"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "event_type": {
+          "type": "string",
+          "const": "machine_state"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "equipment_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "station_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "line_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "machine_state": {
+          "$ref": "#/$defs/MachineStateValue"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    }
+  }
+}

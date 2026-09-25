@@ -1,20 +1,30 @@
 [project]
 name = "zero-defect"
 version = "0.1.0"
-description = "Automated quality control of space-industry parts under closed production and scarce data"
+description = "Traceability and nonconformance analysis for space-industry parts on a closed production line"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 
-# Основной набор — ровно то, что импортирует пакет. Подход к поиску дефектов ещё не
-# выбран, поэтому тяжёлые библиотеки распознавания сюда не входят: каждая добавляется
-# отдельным набором тогда, когда появляется код, который её импортирует. Иначе
-# окружение и будущий образ несли бы гигабайты, которыми никто не пользуется.
+# Основной набор — ровно то, что импортирует работающий сервис. Распознавания по
+# изображению здесь нет и не будет: по постановке вход — уже готовые результаты
+# внешнего анализатора, поэтому ни torch, ни opencv сервису не нужны.
+#
+# cryptography не ниже 48 — ради ML-DSA: постквантовая подпись в гибридном профиле
+# берётся из штатной библиотеки, а не из самописной реализации.
 dependencies = [
-    "numpy>=1.26",
+    "cryptography>=48",
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.optional-dependencies]
+# datamodel-code-generator закреплён точной версией: сгенерированные модели лежат в
+# репозитории, и CI сверяет их со свежей генерацией. Другая версия генератора дала бы
+# другой текст при той же схеме, и проверка падала бы без изменения контракта.
 dev = [
+    "datamodel-code-generator==0.83.0",
     "pytest>=8.3",
     "ruff>=0.6",
 ]
@@ -29,10 +39,24 @@ packages = ["src/zero_defect"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Сгенерированный код проверяется сверкой с генератором, а не стилем: править его руками
+# нельзя, значит и замечания к нему исправить некому.
+extend-exclude = ["src/zero_defect/contracts/generated"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Depends и Header — объявления зависимостей FastAPI, а не вызовы с побочным эффектом:
+# FastAPI читает их из сигнатуры, и в теле функции их не поставить.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+# Предупреждение приходит от TestClient из starlette, а не от чего-либо в этом проекте,
+# и сделать с ним здесь нечего.
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient`",
+]

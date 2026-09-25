@@ -1,0 +1,24 @@
+{
+  "event_id": "EV-000123",
+  "event_type": "inspection_reported",
+  "schema_version": "1.0",
+  "occurred_at": "2026-09-25T10:15:00+03:00",
+  "source_id": "vision-weld",
+  "sequence_no": 418,
+  "item_id": "B-0301",
+  "line_id": "L1",
+  "station_id": "ST-WELD",
+  "checkpoint_id": "CP-WELD-01",
+  "checkpoint_kind": "after_operation",
+  "operation_run_id": "RUN-0301-W",
+  "inspection_result": "defect_signs_found",
+  "defects": [
+    {"defect_type": "POROSITY", "area": "шов 1", "severity": "major", "description": "поры в корне шва"}
+  ],
+  "confidence": 0.88,
+  "observation_quality": "good",
+  "analyzer_version": "visionqc-2.3.1",
+  "evidence_refs": [
+    {"uri": "cam://ST-WELD/CP-WELD-01/B-0301/0001.jpg", "kind": "photo", "captured_at": "2026-09-25T10:14:58+03:00", "checkpoint_id": "CP-WELD-01"}
+  ]
+}
