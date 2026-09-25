@@ -1,0 +1,37 @@
+{
+  "title": "Дефект после операции",
+  "description": "Входной контроль и контроль после фрезерования чистые и достоверные, после сварки найдена пористость шва. Ожидается привязка к сварке как единственной операции между чистым контролем и обнаружением, оператор указан участником без вывода о вине, ссылка на фото сохранена.",
+  "expect": {
+    "nonconformances": {
+      "B-0301/POROSITY": {
+        "status": "reported",
+        "signals": 1,
+        "stage": "operation",
+        "stage_confidence": "strong",
+        "presumed_cause": "not_established",
+        "candidate_operations": [
+          "OP-WELD-020"
+        ],
+        "participants": [
+          "OP-102"
+        ],
+        "operator_blamed": false,
+        "evidence_refs": 1,
+        "evidence_kinds_include": [
+          "clean_boundary",
+          "candidate_operations"
+        ]
+      }
+    },
+    "items": {
+      "B-0301": {
+        "status": "suspect"
+      }
+    },
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

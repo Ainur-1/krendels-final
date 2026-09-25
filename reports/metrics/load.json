@@ -1,0 +1,84 @@
+{
+  "generator": {
+    "items": "300",
+    "sources": "6",
+    "items_per_minute": "6.0",
+    "defect_rate": "0.08",
+    "duplicate_rate": "0.05",
+    "late_rate": "0.03",
+    "seed": "7",
+    "start": "2026-09-26 08:00:00+03:00"
+  },
+  "machine": {
+    "python": "3.12.13",
+    "platform": "macOS-26.2-arm64-arm-64bit"
+  },
+  "runs": [
+    {
+      "workers": 1,
+      "shuffled": false,
+      "messages_sent": 2187,
+      "unique_events": 2100,
+      "accepted": 2100,
+      "duplicates": 87,
+      "rejected": 0,
+      "complete": true,
+      "seconds": 0.574,
+      "messages_per_second": 3813.2,
+      "batch_p50_ms": 11.11,
+      "batch_p95_ms": 24.3,
+      "fingerprint": "a377c59ce4b27f11db347bf362560c23df5e659ce19a0a147fc3853f848d7489"
+    },
+    {
+      "workers": 4,
+      "shuffled": false,
+      "messages_sent": 2187,
+      "unique_events": 2100,
+      "accepted": 2100,
+      "duplicates": 87,
+      "rejected": 0,
+      "complete": true,
+      "seconds": 0.629,
+      "messages_per_second": 3475.7,
+      "batch_p50_ms": 12.82,
+      "batch_p95_ms": 26.2,
+      "fingerprint": "a377c59ce4b27f11db347bf362560c23df5e659ce19a0a147fc3853f848d7489"
+    },
+    {
+      "workers": 1,
+      "shuffled": true,
+      "messages_sent": 2187,
+      "unique_events": 2100,
+      "accepted": 2100,
+      "duplicates": 87,
+      "rejected": 0,
+      "complete": true,
+      "seconds": 0.518,
+      "messages_per_second": 4220.1,
+      "batch_p50_ms": 11.29,
+      "batch_p95_ms": 18.81,
+      "fingerprint": "a377c59ce4b27f11db347bf362560c23df5e659ce19a0a147fc3853f848d7489"
+    },
+    {
+      "workers": 4,
+      "outage": {
+        "refused_batches": 6,
+        "lost_responses": 1,
+        "agent_failed_attempts": 7
+      },
+      "messages_sent": 2187,
+      "unique_events": 2100,
+      "accepted": 2100,
+      "duplicates": 137,
+      "rejected": 0,
+      "complete": true,
+      "seconds": 0.585,
+      "messages_per_second": 3740.4,
+      "batch_p50_ms": 12.4,
+      "batch_p95_ms": 19.35,
+      "fingerprint": "a377c59ce4b27f11db347bf362560c23df5e659ce19a0a147fc3853f848d7489"
+    }
+  ],
+  "same_result_everywhere": true,
+  "no_double_counting": true
+}

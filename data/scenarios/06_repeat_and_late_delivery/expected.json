@@ -1,0 +1,51 @@
+{
+  "title": "Повторная и поздняя доставка",
+  "description": "Нормальный узел, но доставка неидеальна: контроль после фрезерования приходит дважды, завершение сварки опаздывает на 45 минут, одно сообщение станка потеряно, одно сообщение версии 1.1 несёт неизвестное поле, и четыре сообщения нарушают контракт. Ожидается отсутствие повторного учёта, верная история по времени возникновения, видимый пропуск у источника и карантин с кодами ошибок.",
+  "expect": {
+    "ingest": {
+      "responses": {
+        "accepted": 20,
+        "duplicate": 1,
+        "rejected": 4
+      },
+      "late": 1,
+      "out_of_order": 1,
+      "error_codes": [
+        "conflicting_duplicate",
+        "missing_field",
+        "unknown_enum_value",
+        "unknown_schema_version"
+      ],
+      "warning_codes": [
+        "unknown_optional_field"
+      ]
+    },
+    "items": {
+      "U-0601": {
+        "status": "conforming"
+      }
+    },
+    "runs": {
+      "OP-WELD-020/B-0601": {
+        "status": "completed",
+        "station_time_s": 1200.0
+      }
+    },
+    "metrics": {
+      "defects": {
+        "nonconformances_total": 0
+      },
+      "items": {
+        "inspected": 3
+      }
+    },
+    "source_gap_sources": [
+      "mlog-weld01"
+    ],
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

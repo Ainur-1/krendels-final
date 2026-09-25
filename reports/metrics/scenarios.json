@@ -1,0 +1,34 @@
+{
+  "01_normal_production": {
+    "ok": true,
+    "mismatches": []
+  },
+  "02_incoming_defect": {
+    "ok": true,
+    "mismatches": []
+  },
+  "03_defect_after_operation": {
+    "ok": true,
+    "mismatches": []
+  },
+  "04_insufficient_information": {
+    "ok": true,
+    "mismatches": []
+  },
+  "05_equipment_deviation": {
+    "ok": true,
+    "mismatches": []
+  },
+  "06_repeat_and_late_delivery": {
+    "ok": true,
+    "mismatches": []
+  },
+  "07_controller_decision": {
+    "ok": true,
+    "mismatches": []
+  },
+  "08_integrity_tamper": {
+    "ok": true,
+    "mismatches": []
+  }
+}

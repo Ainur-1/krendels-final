@@ -1,0 +1,42 @@
+{
+  "title": "Отклонение оборудования",
+  "description": "Во время сварки ток выходит за допуск, после сварки найден непровар. Ожидается привязка события станка к оборудованию и операции и гипотеза о проблеме оборудования — гипотеза, а не подтверждённая причина. Плановое предупреждение фрезерного станка вне окна операции к фрезерованию не привязывается.",
+  "expect": {
+    "nonconformances": {
+      "B-0501/LACK_OF_FUSION": {
+        "stage": "operation",
+        "stage_confidence": "strong",
+        "presumed_cause": "equipment_problem",
+        "confirmed_cause": null,
+        "candidate_operations": [
+          "OP-WELD-020"
+        ],
+        "evidence_kinds_include": [
+          "machine_deviation",
+          "clean_boundary"
+        ]
+      }
+    },
+    "runs": {
+      "OP-WELD-020/B-0501": {
+        "machine_deviations": 1
+      },
+      "OP-MILL-010/B-0501": {
+        "machine_deviations": 0
+      }
+    },
+    "metrics": {
+      "causes": {
+        "hypotheses": {
+          "equipment_problem": 1
+        },
+        "equipment_problems_confirmed": 0
+      }
+    },
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

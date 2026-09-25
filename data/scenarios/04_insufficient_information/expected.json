@@ -1,0 +1,47 @@
+{
+  "title": "Недостаток сведений для вывода",
+  "description": "Входной контроль невозможен из-за плохого изображения, контроль после фрезерования дал «чисто» с уверенностью 0,42, контроль после сварки пропущен. На финальном контроле найдена трещина корпуса. Ожидается отказ от категоричного вывода: этап не установлен, входной брак не исключён, недостающие сведения перечислены, изделие не считается годным.",
+  "expect": {
+    "nonconformances": {
+      "B-0401/CRACK": {
+        "status": "reported",
+        "stage": "unknown",
+        "stage_confidence": "insufficient",
+        "presumed_cause": "not_established",
+        "operator_blamed": false,
+        "candidate_operations": [
+          "OP-MILL-010",
+          "OP-WELD-020",
+          "OP-ASM-030"
+        ],
+        "participants": [
+          "OP-101",
+          "OP-102",
+          "OP-103"
+        ],
+        "missing_count": 3,
+        "evidence_kinds_include": [
+          "operator_action"
+        ]
+      }
+    },
+    "items": {
+      "U-0401": {
+        "status": "suspect"
+      },
+      "B-0401": {
+        "status": "suspect"
+      }
+    },
+    "metrics": {
+      "extra": {
+        "first_pass_yield": 0.0
+      }
+    },
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

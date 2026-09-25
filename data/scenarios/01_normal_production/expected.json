@@ -1,0 +1,66 @@
+{
+  "title": "Нормальное изготовление",
+  "description": "Два узла проходят маршрут без отклонений. Второй корпус фрезерует другой оператор, операция прерывается на 6 минут для замены фрезы. Ожидается целостная история, отсутствие несоответствий и доступные показатели; время на участке и активное время различаются ровно на паузу.",
+  "expect": {
+    "ingest": {
+      "responses": {
+        "accepted": 38
+      },
+      "duplicates": 0,
+      "rejected": 0,
+      "late": 0
+    },
+    "items": {
+      "U-0101": {
+        "status": "conforming"
+      },
+      "U-0102": {
+        "status": "conforming"
+      },
+      "B-0102": {
+        "status": "conforming"
+      },
+      "F-0101": {
+        "status": "conforming"
+      }
+    },
+    "runs": {
+      "OP-MILL-010/B-0102": {
+        "status": "completed",
+        "station_time_s": 1980.0,
+        "active_time_s": 1620.0,
+        "reported_duration_s": 1620.0,
+        "shift_origin": "system"
+      },
+      "OP-MILL-010/B-0101": {
+        "status": "completed",
+        "station_time_s": 1500.0
+      }
+    },
+    "metrics": {
+      "items": {
+        "total": 6,
+        "inspected": 6
+      },
+      "defects": {
+        "nonconformances_total": 0,
+        "signals_total": 0
+      },
+      "operations": {
+        "runs_total": 6,
+        "rework_runs": 0,
+        "unfinished": 0
+      },
+      "extra": {
+        "first_pass_yield": 1.0,
+        "items_with_final_inspection": 2
+      }
+    },
+    "source_gap_sources": [],
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "title": "Решение контролёра",
+  "description": "Один сигнал анализатора сообщает два признака. Заусенец контролёр подтверждает, технолог устанавливает причину, после доработки несоответствие закрывается. Сомнительную царапину контролёр отправляет на повторную проверку и по её итогу отклоняет. Ожидается, что исходный сигнал сохранён, решения — отдельные записи с авторами, показатели обновлены, повторная обработка учтена.",
+  "expect": {
+    "nonconformances": {
+      "B-0701/BURR": {
+        "status": "closed",
+        "signals": 1,
+        "confirmed_cause": "operator_error",
+        "decisions": [
+          "confirm",
+          "confirm_cause",
+          "close"
+        ],
+        "decision_authors": [
+          "ctrl-01",
+          "tech-01"
+        ],
+        "stage": "operation",
+        "candidate_operations": [
+          "OP-MILL-010"
+        ],
+        "participants": [
+          "OP-101"
+        ],
+        "operator_blamed": false
+      },
+      "B-0701/SCRATCH": {
+        "status": "rejected",
+        "signals": 1,
+        "decisions": [
+          "request_recheck",
+          "reject"
+        ]
+      }
+    },
+    "items": {
+      "U-0701": {
+        "status": "conforming"
+      }
+    },
+    "metrics": {
+      "defects": {
+        "signals_total": 2,
+        "nonconformances_total": 2,
+        "confirmed": 1,
+        "rejected": 1,
+        "pending_review": 0
+      },
+      "causes": {
+        "established": 1,
+        "operator_errors_confirmed": 1
+      },
+      "operations": {
+        "rework_runs": 1,
+        "items_with_rework": 1
+      },
+      "comparable_work": {
+        "OP-MILL-010": {
+          "OP-101": {
+            "runs": 2,
+            "confirmed_errors": 1,
+            "error_rate": 0.5
+          }
+        }
+      },
+      "extra": {
+        "first_pass_yield": 0.0
+      }
+    },
+    "decision_errors": [],
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}

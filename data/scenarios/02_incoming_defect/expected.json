@@ -1,0 +1,45 @@
+{
+  "title": "Входной дефект",
+  "description": "Включение в материале заготовки найдено на входном контроле, после фрезерования анализатор видит его снова. Ожидается одна карточка на два наблюдения, этап — входной контроль, фрезерование и его оператор источником не считаются.",
+  "expect": {
+    "nonconformances": {
+      "B-0201/INCLUSION": {
+        "status": "reported",
+        "signals": 2,
+        "stage": "incoming",
+        "stage_confidence": "strong",
+        "presumed_cause": "incoming_defect",
+        "operator_blamed": false,
+        "candidate_operations": [],
+        "participants": [],
+        "evidence_kinds_include": [
+          "incoming_inspection",
+          "later_operations_excluded"
+        ]
+      }
+    },
+    "items": {
+      "B-0201": {
+        "status": "suspect"
+      }
+    },
+    "metrics": {
+      "defects": {
+        "signals_total": 2,
+        "nonconformances_total": 1,
+        "confirmed": 0
+      },
+      "causes": {
+        "hypotheses": {
+          "incoming_defect": 1
+        },
+        "operator_errors_confirmed": 0
+      }
+    },
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "update_prevented": true
+    }
+  }
+}
