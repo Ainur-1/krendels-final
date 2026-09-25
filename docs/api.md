@@ -47,6 +47,14 @@
 | `POST /api/lines/{id}/emulation`, `POST /api/lines/{id}/emulation/inject` | `emulate` | пуск и остановка эмуляции, дефект или отклонение станка в выбранный этап |
 | `GET /api/flows/example`, `POST /api/flows` | `read` / `line_manage` | пример потока и загрузка своего ([flows.md](flows.md)) |
 | `GET /api/admin/users` | `admin` | пользователи, роли, задан ли пароль |
+| `GET /api/plant` | `read` | обзор производства: все линии и изделия, которые они выпускают |
+| `GET /api/lines/{id}/timeline` | `read` | границы шкалы времени и отметки: обнаружения, решения, отклонения станков |
+| параметр `at` у `/live`, `/stages`, `/stages/{node}`, `/overview`, `/items`, `/api/items/{id}/path` | `read` | состояние на момент времени: только события и решения до него |
+| `POST /api/lines/graph`, `PUT /api/lines/{id}/graph` | `line_manage` | линия из блочного редактора: блоки, связи, параметры блоков |
+| `POST /api/lines/{id}/runs` | `emulate` | прогон на существующей линии по данным контракта: изделия, время показа, вероятности по этапам, принудительные дефекты |
+| `GET /api/admin/db[?table=]` | `admin` | таблицы базы с числом строк и последние строки; секреты и шифротекст не показываются |
+| `GET /api/admin/roles`, `GET /api/admin/defects`, `GET /api/admin/equipment` | `admin` | матрица прав, справочник дефектов, станки линий |
+| `GET /emulator` | — | страница пульта эмулятора |
 
 ## Ошибки
 
