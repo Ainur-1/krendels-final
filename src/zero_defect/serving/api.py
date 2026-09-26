@@ -33,8 +33,17 @@ from zero_defect.integration.registry import build_adapters
 from zero_defect.ledger.crypto import PROFILES
 from zero_defect.lines.emulator import LiveEmulator
 from zero_defect.lines.equipment import EquipmentStore
+from zero_defect.lines.registry import Registry
 from zero_defect.lines.store import LineStore
-from zero_defect.security.auth import PERMISSIONS, AuthError, Principal, issue_token
+from zero_defect.security.auth import (
+    PERMISSIONS,
+    ROLE_META,
+    AuthError,
+    Principal,
+    issue_token,
+    load_users,
+)
+from zero_defect.security.roles import RoleStore
 from zero_defect.service import DecisionError, QualitySystem
 from zero_defect.serving import admin_routes, lines_routes, payloads
 from zero_defect.simulation.demo import demo_steps
@@ -74,6 +83,10 @@ def create_app(
         system, adapters if adapters is not None else build_adapters(settings), outbox
     )
     lines = LineStore(system.database)
+    # Справочники администратора читаются до станков и линий: тип станка и виды дефектов
+    # из базы должны быть известны, когда проверяется конфигурация.
+    registry = Registry(system.database)
+    roles_store = RoleStore(system.database, set(admin_routes.PERMISSION_TITLES))
     equipment = EquipmentStore(system.database)
     demo = load_demo if load_demo is not None else settings.demo
     if demo and not system.ingest_summary()["accepted"]:
@@ -149,6 +162,9 @@ def create_app(
 
         users = []
         if settings.demo:
+            # Только встроенные демонстрационные пользователи: у них пароль совпадает с
+            # логином. Пользователей, заведённых администратором, здесь нет.
+            seeded = set(load_users(settings.users_path))
             users = [
                 {
                     "user_id": user.user_id,
@@ -157,6 +173,7 @@ def create_app(
                     "has_password": system.users.has_password(user.user_id),
                 }
                 for user in system.security.users.values()
+                if user.user_id in seeded
             ]
         return {"demo": settings.demo, "users": users}
 
@@ -179,7 +196,13 @@ def create_app(
 
     @app.get("/api/me")
     def me(user: Principal = Depends(principal)) -> dict:
-        return {**user.__dict__, "permissions": sorted(_permissions(user))}
+        meta = ROLE_META.get(user.role, {"title": user.role, "screen": "controller"})
+        return {
+            **user.__dict__,
+            "permissions": sorted(_permissions(user)),
+            "role_title": meta["title"],
+            "screen": meta["screen"],
+        }
 
     # --- приём событий --------------------------------------------------------------
 
@@ -380,7 +403,7 @@ def create_app(
         return system.telemetry.snapshot()
 
     lines_routes.register(app, system, lines, equipment, emulator, principal, reader)
-    admin_routes.register(app, system, lines, equipment, principal)
+    admin_routes.register(app, system, lines, equipment, registry, roles_store, principal)
 
     # --- интерфейс ------------------------------------------------------------------
 

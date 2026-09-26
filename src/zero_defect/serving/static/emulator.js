@@ -1,7 +1,7 @@
 // Пульт эмулятора: отдельная страница, вынесенная за пределы системы. Отсюда линиями
 // управляют так, как управлял бы стенд: пуск, остановка, дефект в выбранный этап и
 // прогон по данным контракта. Система видит всё это обычными событиями источников.
-import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.4.0";
+import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.5.0";
 
 let lines = [];
 let configs = {};
@@ -10,14 +10,14 @@ const forced = [];
 
 async function start() {
   if (!session.token) {
-    document.querySelector("main").innerHTML = `<section class="card"><p>Сначала войдите в систему ролью с правом управлять эмуляцией (руководитель производства, мастер или администратор), затем откройте пульт снова.</p><a class="btn primary" href="/">Войти</a></section>`;
+    document.querySelector("main").innerHTML = `<section class="card"><p>Для работы с пультом войдите в систему под ролью с правом управления эмуляцией: руководитель производства, мастер участка или администратор.</p><a class="btn primary" href="/">Войти</a></section>`;
     return;
   }
   try { await login(session.token); } catch { location.href = "/"; return; }
-  $("user-chip").innerHTML = `<b>${esc(L.role[session.me.role])}</b>`;
+  $("user-chip").innerHTML = `<b>${esc(session.me.role_title)}</b>`;
   $("user-chip").title = `${session.me.name} (${session.me.user_id})`;
   if (!can("emulate")) {
-    document.querySelector("main").innerHTML = `<section class="card"><p>У роли «${esc(L.role[session.me.role])}» нет права управлять эмуляцией.</p></section>`;
+    document.querySelector("main").innerHTML = `<section class="card"><p>У роли «${esc(session.me.role_title)}» нет права управления эмуляцией.</p></section>`;
     return;
   }
   await loadLines();
@@ -45,7 +45,7 @@ function renderLines() {
     const run = em.run && !em.run.finished ? em.run : null;
     const nodes = configs[l.line_id]?.order.map((id) => configs[l.line_id].nodes.find((n) => n.node_id === id)) || [];
     return `<article class="emu-line" data-line="${esc(l.line_id)}">
-      <div class="row spread"><b>${esc(l.title)}</b>${run ? badge(`прогон ${Math.round(run.progress * 100)} %`, "info") : em.running ? badge(`идёт ×${Math.round(em.speed)}`, "ok") : badge("остановлена", "plain")}</div>
+      <div class="row spread"><b>${esc(l.title)}</b>${run ? badge(`Прогон: ${Math.round(run.progress * 100)} %`, "info") : em.running ? badge(`Работает, ×${Math.round(em.speed)}`, "ok") : badge("Остановлена", "plain")}</div>
       ${run ? `<div class="progress" style="margin:6px 0"><i style="width:${Math.round(run.progress * 100)}%"></i></div>` : ""}
       <div class="row" style="margin-top:6px">
         ${em.running ? `<button class="btn small" data-act="stop">■ Стоп</button>` : `<button class="btn small primary" data-act="start">▶ Пуск</button>`}
@@ -55,7 +55,7 @@ function renderLines() {
         <select data-act="node" aria-label="Этап">${nodes.map((n) => `<option value="${esc(n.node_id)}">${n.kind === "operation" ? "⚙" : "◉"} ${esc(n.title)}</option>`).join("")}</select>
         <button class="btn small" data-act="defect">Внести дефект</button><button class="btn small" data-act="deviation">Отклонение станка</button>
       </div>
-      ${Object.keys(em.forced).length ? `<div class="muted small">ожидают следующего изделия: ${Object.entries(em.forced).map(([n, k]) => `${esc(n)} — ${k === "deviation" ? "отклонение" : "дефект"}`).join(", ")}</div>` : ""}
+      ${Object.keys(em.forced).length ? `<div class="muted small">Ожидают следующего изделия: ${Object.entries(em.forced).map(([n, k]) => `${esc(n)} (${k === "deviation" ? "отклонение станка" : "дефект"})`).join(", ")}</div>` : ""}
     </article>`;
   }).join("");
   $("emu-lines").querySelectorAll("[data-line]").forEach((card) => {
@@ -98,7 +98,7 @@ function renderRun() {
     const body = { items: Number(form.items.value), duration_s: Number(form.duration_s.value), seed: Number(form.seed.value), defect_rates_pct: rates, defects: forced };
     try {
       const r = await api(`/api/lines/${chosen}/runs`, { method: "POST", body: JSON.stringify(body) });
-      notify(`Прогон запущен на линии ${chosen}: ускорение ×${r.speed}. Смотрите граф линии в системе.`);
+      notify(`Прогон запущен на линии ${chosen}: ускорение ×${r.speed}. Ход прогона отображается на графе линии в системе.`);
       refreshLines();
     } catch (error) { notify(error.message, true); }
   });

@@ -1,22 +1,23 @@
 // Интерфейс Zero Defect: обзор производства → линия. Всё содержимое выводится на экране
 // линии вокруг её графа: детали — в правой панели, этапы — в выпадающей сверху панели,
 // время — на шкале внизу. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
-import { CONTRACT } from "./contract.js?v=0.4.0";
-import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.4.0";
-import { openEditor } from "./editor.js?v=0.4.0";
+import { CONTRACT } from "./contract.js?v=0.5.0";
+import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.0";
+import { openEditor } from "./editor.js?v=0.5.0";
 
 const GUIDE = {
-  controller: ["Откройте линию — слева очередь несоответствий, сначала критичные.", "«⟲ к моменту отказа» переносит линию в момент обнаружения: видно, что происходило на станках тогда.", "Откройте карточку и примите решение с обоснованием — оно ляжет отдельной записью, исходное сообщение не меняется."],
-  master: ["Обзор производства показывает все линии; красная рамка — у линии есть несоответствия, ждущие решения.", "На линии под каждым станком — сколько изделий в каком статусе у него стоит.", "Слева — операции в работе, отклонения оборудования и пропуски сообщений."],
-  technologist: ["Слева — где возникают дефекты по оценке системы и сбои оборудования: полоса у каждого станка показывает его последние состояния, красное — выход режима за допуск.", "Нажмите станок — справа его показатели с оценкой цветом и графики параметров режима с полосой допуска.", "«Этапы процесса» в шапке раскрывает статистику по каждому этапу с фильтрами по изделию, смене и периоду."],
-  manager: ["Обзор производства — все линии и изделия; «Новая линия» открывает блочный редактор.", "Операцию ставят на станок из справочника: обработка и виды дефектов подтягиваются по типу станка. Новый станок заводит администратор.", "«Экономика» в шапке линии считает потери, затраты на годное и пропускную способность по вашим параметрам."],
-  admin: ["Кнопка ☰ слева от названия линии открывает панель администрирования; поле линии при этом сдвигается, а не перекрывается.", "«Оборудование и станки» — справочник: новый станок с типом, дефектами и допусками параметров заводится здесь.", "«Смотреть как» показывает экран любой роли — права при этом остаются вашими."],
+  controller: ["Слева расположена очередь текущих проблем линии: сначала критичные, решённые внизу списка. Очередь не зависит от шкалы времени.", "Выбор проблемы переносит линию в момент её обнаружения и выделяет этап, на котором она обнаружена.", "Решение принимается во вкладке «Проблема» под линией с обязательным обоснованием и записывается отдельной записью журнала."],
+  master: ["На обзоре производства красная рамка обозначает линию с проблемами, ожидающими решения.", "Под каждым этапом в кругах указано число прошедших изделий по статусам. Над этапом указано число проблем на выбранный момент.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
+  technologist: ["Кнопка «Оборудование» в шапке открывает справочник станков. Новый станок регистрируется по типу, который описал администратор.", "Слева показаны этапы возникновения дефектов и сбои оборудования. Полоса у каждого станка отражает его последние состояния.", "На шкале времени отмечены сбои станков (красным) и их возврат в работу (зелёным).", "Выбор станка открывает во вкладке «Этап» его показатели и графики параметров режима с полосой допуска."],
+  manager: ["Обзор производства показывает все линии и выпускаемые изделия. Кнопка «Новая линия» открывает блочный редактор.", "Операция назначается на станок из справочника оборудования. Обработка и виды дефектов определяются типом станка.", "Кнопка «Экономика» в шапке линии открывает расчёт потерь и затрат на годное изделие."],
+  admin: ["Главный экран администратора: «Администрирование». Здесь описываются типы станков и виды дефектов, заводятся роли и пользователи.", "Тип станка является шаблоном: обработка, виды дефектов и параметры режима с допусками. Конкретный станок по шаблону регистрирует технолог.", "Раздел «Производство» открывает линии. Режим «Смотреть как» показывает экран другой роли, права администратора при этом сохраняются."],
 };
 
 const S = {
   view: "plant", lineId: null, lines: [], plant: null, live: null, timeline: null, overview: null, at: null,
-  itemType: "", viewRole: null, drawer: null, prevItems: new Map(), prevNodes: {}, geometry: null, zoom: null, playing: null,
+  itemType: "", viewRole: null, detail: null, prevItems: new Map(), prevNodes: {}, geometry: null, zoom: null, playing: null,
   playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stagesOpen: false, leftOpen: false,
+  range: { since: null, until: null }, windowMode: null, lane: "items", focusByLane: { items: null, machines: null }, selectedNode: null, queue: null,
 };
 const withAt = (path) => (S.at ? `${path}${path.includes("?") ? "&" : "?"}at=${encodeURIComponent(S.at)}` : path);
 
@@ -57,18 +58,19 @@ $("password-form").addEventListener("submit", async (e) => {
 
 async function enter(token) {
   await login(token);
-  S.viewRole = session.me.role;
+  S.viewRole = session.me.screen;
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
-  $("user-chip").innerHTML = `<b>${esc(L.role[session.me.role])}</b>`;
+  $("user-chip").innerHTML = `<b>${esc(session.me.role_title)}</b>`;
   $("user-chip").title = `${session.me.name} (${session.me.user_id})`;
   $("view-as-wrap").classList.toggle("hidden", !can("view_as"));
   $("view-as").innerHTML = Object.keys(GUIDE).map((r) => `<option value="${r}">${esc(L.role[r])}</option>`).join("");
   $("view-as").value = S.viewRole;
-  $("view-as").onchange = () => { S.viewRole = $("view-as").value; syncLeft(); renderRolePanel(); };
+  $("view-as").onchange = () => { S.viewRole = $("view-as").value; syncLeft(); renderRolePanel(); if (S.timeline) renderTimeline(); if (S.live) renderGraph(S.live); };
   S.lines = await api("/api/lines");
   const saved = store.get("zd-line");
   if (saved && S.lines.some((l) => l.line_id === saved) && store.get("zd-view") === "line") openLine(saved);
+  else if (can("admin") && store.get("zd-view") !== "plant") showAdmin();
   else showPlant();
 }
 $("logout").addEventListener("click", () => { logout(); showLogin(); });
@@ -88,34 +90,30 @@ function syncLeft() {
 function setLeft(open) { S.leftOpen = open; syncLeft(); }
 $("left-toggle").addEventListener("click", () => setLeft(!S.leftOpen));
 
-// Любая выплывающая панель закрывается нажатием вне её. Нажатия, которые сами открывают
-// панель (станок, изделие, метка на шкале), её не закрывают — иначе она мигала бы.
-const OPENERS = ".node, [data-node], [data-item], [data-nc], [data-rollback], [data-badge], [data-origin-node], .tl-mark, [data-act], [data-open], [data-admin]";
+// Выплывающие панели закрываются нажатием вне их: этапы и панель администратора.
 document.addEventListener("pointerdown", (e) => {
   const t = e.target;
   if (!(t instanceof Element) || t.closest(".modal-backdrop, .toast")) return;
-  if (S.stagesOpen && !t.closest("#stages-drop, [data-act='stages']")) closeStages();
-  if (S.drawer && !t.closest(`.area-drawer, ${OPENERS}`)) drawerDefault();
+  if (S.stagesOpen && !t.closest("#stages-drop, [data-act='stages'], .node, #details")) closeStages();
   if (S.leftOpen && S.viewRole === "admin" && !t.closest("#role-panel, #left-toggle")) setLeft(false);
 }, true);
 
 function renderTop() {
-  const crumbs = [`<a href="#" data-go="plant" class="${S.view === "plant" ? "current" : ""}">Производство</a>`];
+  // У администратора центральная функция — администрирование: оно первое в навигации.
+  const plant = `<a href="#" data-go="plant" class="${S.view === "plant" ? "current" : ""}">Производство</a>`;
+  const admin = can("admin") ? `<a href="#" data-go="admin" class="${S.view === "admin" ? "current" : ""}">Администрирование</a>` : "";
+  const crumbs = can("admin") ? [admin, `<span class="muted">|</span>`, plant] : [plant];
   if (S.view === "line") crumbs.push(`<span class="muted">/</span><select id="line-select" aria-label="Линия">${S.lines.map((l) => `<option value="${esc(l.line_id)}" ${l.line_id === S.lineId ? "selected" : ""}>${esc(l.title)}</option>`).join("")}</select>`);
   $("crumbs").innerHTML = crumbs.join("");
   $("crumbs").querySelector('[data-go="plant"]').addEventListener("click", (e) => { e.preventDefault(); showPlant(); });
+  $("crumbs").querySelector('[data-go="admin"]')?.addEventListener("click", (e) => { e.preventDefault(); showAdmin(); });
   $("line-select")?.addEventListener("change", (e) => openLine(e.target.value));
-  // В шапке — только то, что относится к текущему экрану. Редактирование линии и
-  // администрирование живут в панели роли и на обзоре производства: иначе у
-  // администратора шапка разъезжалась на три строки.
   const actions = [];
   if (S.view === "line") {
     actions.push(`<button class="btn small ${S.stagesOpen ? "active" : ""}" data-act="stages">Этапы процесса ${S.stagesOpen ? "▲" : "▼"}</button>`, `<button class="btn small" data-act="items">Изделия</button>`, `<button class="btn small" data-act="economics">Экономика</button>`);
-  } else {
-    if (can("line_manage")) actions.push(`<button class="btn small" data-act="new-line">Новая линия</button>`);
-    if (can("admin")) actions.push(`<button class="btn small" data-act="admin">Администрирование</button>`);
-  }
-  if (can("emulate")) actions.push(`<a class="btn small" href="/emulator" target="_blank" rel="noopener">Пульт эмулятора ↗</a>`);
+  } else if (S.view === "plant" && can("line_manage")) actions.push(`<button class="btn small" data-act="new-line">Новая линия</button>`);
+  if (can("equipment_manage") && !can("admin")) actions.push(`<button class="btn small" data-act="equipment">Оборудование</button>`);
+  if (can("emulate")) actions.push(`<a class="btn small" href="/emulator">Пульт эмулятора</a>`);
   $("top-actions").innerHTML = actions.join("");
   $("top-actions").querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => ACTIONS[b.dataset.act]()));
 }
@@ -126,7 +124,7 @@ const ACTIONS = {
   economics: () => openEconomics(),
   "new-line": () => openEditor({ lines: S.lines, onSaved: afterSave }),
   "edit-line": async () => openEditor({ lines: S.lines, config: await api(`/api/lines/${S.lineId}`), onSaved: afterSave }),
-  admin: () => openAdmin("equipment"),
+  equipment: () => openEquipment(),
 };
 async function afterSave(lineId) { S.lines = await api("/api/lines"); openLine(lineId); }
 
@@ -139,6 +137,7 @@ function showPlant() {
   stopPlaying();
   closeStages();
   $("line-view").classList.add("hidden");
+  $("admin-view").classList.add("hidden");
   $("plant-view").classList.remove("hidden");
   renderTop();
   const p = poller(refreshPlant, 4000);
@@ -160,17 +159,17 @@ async function refreshPlant() {
   const filter = S.itemType;
   const lines = S.plant.lines.filter((l) => !filter || l.item_types.includes(filter));
   $("plant-view").innerHTML = `
-    <div class="plant-head"><div><h1>Производство</h1><p class="muted">Все линии завода: где идут изделия и где несоответствия ждут решения. Выберите линию или изделие.</p></div>
-      <div class="products"><span class="muted">Изделие:</span><button class="chip-btn ${!filter ? "active" : ""}" data-product="">все</button>${S.plant.products.map((p) => `<button class="chip-btn ${filter === p.item_type ? "active" : ""}" data-product="${esc(p.item_type)}">${esc(p.item_type)} <small>${esc(p.lines.join(", "))}</small></button>`).join("")}</div></div>
+    <div class="plant-head"><div><h1>Производство</h1><p class="muted">Линии предприятия, изделия в работе и проблемы, ожидающие решения. Выберите линию или изделие.</p></div>
+      <div class="products"><span class="muted">Изделие:</span><button class="chip-btn ${!filter ? "active" : ""}" data-product="">Все</button>${S.plant.products.map((p) => `<button class="chip-btn ${filter === p.item_type ? "active" : ""}" data-product="${esc(p.item_type)}">${esc(p.item_type)} <small>${esc(p.lines.join(", "))}</small></button>`).join("")}</div></div>
     <div class="plant-grid">${lines.map((l) => `
       <article class="line-card ${l.open_nonconformances ? "alarm" : ""}" data-line="${esc(l.line_id)}" tabindex="0">
-        <div class="row spread"><b>${esc(l.title)}</b>${l.emulation.running || (l.emulation.run && !l.emulation.run.finished) ? badge("идёт", "info") : badge("простой", "plain")}</div>
+        <div class="row spread"><b>${esc(l.title)}</b>${l.emulation.running || (l.emulation.run && !l.emulation.run.finished) ? badge("Работает", "info") : badge("Простой", "plain")}</div>
         ${miniGraph(l)}
-        <div class="kpis four"><div class="kpi"><b>${l.items}</b><span>изделий</span></div><div class="kpi"><b>${l.in_progress_runs}</b><span>операций в работе</span></div>
-          <div class="kpi"><b class="${l.open_nonconformances ? "bad-text" : ""}">${l.open_nonconformances}</b><span>ждут решения</span></div><div class="kpi"><b>${pct(l.final_yield)}</b><span>годных на ОТК</span></div></div>
-        <div class="muted small">${esc(l.item_types.join(" · "))} · последнее событие ${time(l.latest_event_at)}</div>
+        <div class="kpis four"><div class="kpi"><b>${l.items}</b><span>Изделий</span></div><div class="kpi"><b>${l.in_progress_runs}</b><span>Операций в работе</span></div>
+          <div class="kpi"><b class="${l.open_nonconformances ? "bad-text" : ""}">${l.open_nonconformances}</b><span>Ждут решения</span></div><div class="kpi"><b>${pct(l.final_yield)}</b><span>Годных на ОТК</span></div></div>
+        <div class="muted small">${esc(l.item_types.join(" · "))} · последнее событие: ${time(l.latest_event_at)}</div>
       </article>`).join("")}
-      ${can("line_manage") ? `<button class="line-card add" id="plant-new"><b>＋ Новая линия</b><span class="muted">блочный редактор: этапы, станки, связи</span></button>` : ""}
+      ${can("line_manage") ? `<button class="line-card add" id="plant-new"><b>＋ Новая линия</b><span class="muted">Блочный редактор этапов, станков и связей</span></button>` : ""}
     </div>`;
   $("plant-view").querySelectorAll("[data-product]").forEach((b) => b.addEventListener("click", () => { S.itemType = b.dataset.product; refreshPlant(); }));
   $("plant-view").querySelectorAll("[data-line]").forEach((c) => {
@@ -182,30 +181,49 @@ async function refreshPlant() {
 
 // --- линия -------------------------------------------------------------------------------------------------
 
+// Какие отметки видит роль на шкале. Контролёр работает с изделиями, технолог со станками;
+// мастер, руководитель и администратор переключаются между ними, и выбор в каждой дорожке
+// сохраняется при переключении.
+const LANE_OF_ROLE = { controller: "items", technologist: "machines" };
+const laneFixed = () => LANE_OF_ROLE[S.viewRole] || null;
+const lane = () => laneFixed() || S.lane;
+const focus = () => S.focusByLane[lane()];
+
 async function openLine(lineId) {
   S.view = "line";
   S.lineId = lineId;
+  S.range = { since: null, until: null };
   S.at = null;
   S.geometry = null;
   S.zoom = null;
   S.prevItems = new Map();
   S.prevNodes = {};
+  S.focusByLane = { items: null, machines: null };
+  S.selectedNode = null;
   stopPlaying();
   store.set("zd-line", lineId);
   store.set("zd-view", "line");
   stopPollers();
   $("plant-view").classList.add("hidden");
+  $("admin-view").classList.add("hidden");
   $("line-view").classList.remove("hidden");
   const types = S.lines.find((l) => l.line_id === lineId)?.item_types || [];
   if (!types.includes(S.itemType)) S.itemType = "";
   const options = (all) => `<option value="">${all}</option>` + types.map((t) => `<option ${t === S.itemType ? "selected" : ""}>${esc(t)}</option>`).join("");
-  $("product-filter").innerHTML = options("все изделия");
-  $("f-type").innerHTML = options("все типы изделий");
+  $("product-filter").innerHTML = options("Все изделия");
+  $("f-type").innerHTML = options("Все типы изделий");
   renderTop();
   syncLeft();
-  drawerDefault();
-  await Promise.all([refreshLive(), refreshOverview(), refreshTimeline()]);
-  S.pollers.push(poller(() => (S.at ? null : refreshLive()), 1500), poller(() => (S.at ? null : refreshOverview()), 5000), poller(() => (S.at ? null : refreshTimeline()), 10000));
+  renderLegend();
+  detailsEmpty();
+  await refreshTimeline();
+  await Promise.all([refreshLive(), refreshOverview(), refreshQueue()]);
+  S.pollers.push(
+    poller(() => (S.at ? null : refreshLive()), 1500),
+    poller(refreshQueue, 2000),
+    poller(() => (S.at ? null : refreshOverview()), 5000),
+    poller(refreshTimeline, 10000),
+  );
 }
 
 $("product-filter").addEventListener("change", (e) => {
@@ -227,20 +245,28 @@ async function refreshLive() {
 
 async function refreshAll() {
   await Promise.all([refreshLive(), refreshOverview(), S.stagesOpen ? refreshStages() : null]);
-  if (S.drawer?.refresh) await S.drawer.refresh();
+  if (S.detail?.refresh) await S.detail.refresh();
 }
 
 // --- граф ---------------------------------------------------------------------------------------------------
 
-const NODE_W = 160, NODE_H = 70, SX = 1.25;
-const STATUS = [["in_progress", "var(--accent)", "в работе"], ["conforming", "var(--ok)", "годно"], ["suspect", "var(--bad)", "на рассмотрении"], ["nonconforming", "var(--bad)", "несоответствие"], ["not_assessable", "var(--warn)", "оценка невозможна"]];
+const NODE_W = 160, NODE_H = 70, SX = 1.25, PILL_R = 14;
+// Цвета статусов изделий. Красным здесь помечено только несоответствие, оттенки критичности
+// у списка проблем свои и с этими цветами не пересекаются.
+const STATUS = [["in_progress", "var(--accent)", "В работе"], ["conforming", "var(--ok)", "Годно"], ["suspect", "var(--bad)", "На рассмотрении"], ["nonconforming", "var(--bad)", "Несоответствие"], ["not_assessable", "var(--amber)", "Оценка невозможна"]];
+
+function renderLegend() {
+  $("graph-legend").innerHTML = `${STATUS.filter(([s]) => s !== "suspect").map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}
+    <span class="legend-sep">Проблемы на выбранный момент:</span>
+    <span><i class="sq" style="background:var(--bad)"></i>несоответствие</span><span><i class="sq" style="background:var(--amber)"></i>оценка невозможна</span><span><i class="sq" style="background:var(--resolved)"></i>решено позднее</span>`;
+}
 
 function geometry(raw) {
   const nodes = raw.map((n) => ({ ...n, x: n.x * SX, y: n.y }));
   const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-  const box = { x: Math.min(...xs) - NODE_W / 2 - 60, y: Math.min(...ys) - NODE_H / 2 - 40 };
+  const box = { x: Math.min(...xs) - NODE_W / 2 - 60, y: Math.min(...ys) - NODE_H / 2 - 50 };
   box.w = Math.max(...xs) + NODE_W / 2 + 40 - box.x;
-  box.h = Math.max(...ys) + NODE_H / 2 + 60 - box.y;
+  box.h = Math.max(...ys) + NODE_H / 2 + 70 - box.y;
   return { box, pos: Object.fromEntries(nodes.map((n) => [n.node_id, n])), key: `${S.lineId}:${raw.map((n) => `${n.node_id}@${n.x},${n.y}:${n.title}:${n.equipment_id}:${n.processing}`).join(",")}` };
 }
 
@@ -266,13 +292,14 @@ function buildGraph(live) {
   const edges = live.edges.map(([a, b]) => `<path class="edge" data-edge="${esc(a)}>${esc(b)}" d="${edgePath(g.pos[a], g.pos[b])}" marker-end="url(#arrow)"/>`).join("");
   const nodes = Object.values(g.pos).map((n) => {
     const icon = n.kind === "operation" ? (n.assembly ? "⧉" : "⚙") : "◉";
-    const sub = n.kind === "operation" ? [n.equipment_id || n.station_id, n.processing].filter(Boolean).join(" · ") : ({ incoming: "входной контроль", after_operation: "контроль", final: "финальный контроль" }[n.checkpoint_kind] || "контроль");
+    const sub = n.kind === "operation" ? [n.equipment_id || n.station_id, n.processing].filter(Boolean).join(" · ") : ({ incoming: "Входной контроль", after_operation: "Контроль", final: "Финальный контроль" }[n.checkpoint_kind] || "Контроль");
     // Длинный текст не обрезается многоточием, а бежит строкой внутри блока (marqueeSvg).
     return `<g class="node ${n.kind}" data-node="${esc(n.node_id)}" transform="translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})">
+      <rect class="focus-ring" x="-8" y="-8" width="${NODE_W + 16}" height="${NODE_H + 16}" rx="18"/>
       <rect class="box" width="${NODE_W}" height="${NODE_H}" rx="12"/>
       <text class="icon" x="12" y="24">${icon}</text><text x="32" y="24" data-fit="${NODE_W - 42}">${esc(n.title)}</text>
       <text class="sub" x="12" y="44" data-fit="${NODE_W - 22}">${esc(sub)}</text><text class="sub" data-f="passed" x="12" y="60"></text>
-      <g data-f="badges"></g><g data-f="counts" transform="translate(0,${NODE_H + 16})"></g></g>`;
+      <g data-f="badges"></g><g data-f="counts" transform="translate(0,${NODE_H + 22})"></g></g>`;
   }).join("");
   svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--flow)"/></marker></defs>
     <g id="edges">${edges}</g><g id="nodes">${nodes}</g><g id="moving"></g><g id="fx"></g>`;
@@ -280,7 +307,8 @@ function buildGraph(live) {
   svg.querySelectorAll(".node").forEach((el) => {
     el.addEventListener("click", (e) => {
       const badgeEl = e.target.closest("[data-badge]");
-      if (badgeEl) openBadge(el.dataset.node, badgeEl.dataset.badge);
+      selectNode(el.dataset.node);
+      if (badgeEl) openStageProblems(el.dataset.node);
       else openNode(el.dataset.node);
     });
     el.addEventListener("mouseenter", () => hoverNode(el.dataset.node, true));
@@ -297,55 +325,71 @@ function hoverNode(nodeId, on) {
   if (!on || !S.live) { tip.classList.add("hidden"); return; }
   const n = S.live.nodes.find((x) => x.node_id === nodeId);
   if (!n) return;
-  tip.innerHTML = `<b>${esc(n.title)}</b><div>${n.kind === "operation" ? `станок ${esc(n.equipment_id || "—")} · норма ${mins(n.duration_s)}` : "контрольная точка"}</div>
-    <div>прошло ${n.passed}${n.machine_state ? ` · станок: ${esc(n.machine_state)}` : ""}</div>
-    ${n.open_detections ? `<div class="bad-text">обнаружено, ждёт решения: ${n.open_detections}</div>` : ""}${n.originated ? `<div class="origin-text">возникло здесь: ${n.originated}</div>` : ""}<div class="muted">нажмите — подробности этапа</div>`;
+  const p = n.problems;
+  tip.innerHTML = `<b>${esc(n.title)}</b><div>${n.kind === "operation" ? `Станок ${esc(n.equipment_id || "не задан")}, норма ${mins(n.duration_s)}` : "Контрольная точка"}</div>
+    <div>Изделий прошло: ${n.passed}</div>
+    ${p.nonconformance ? `<div class="bad-text">Несоответствий в работе: ${p.nonconformance}</div>` : ""}${p.not_assessable ? `<div class="amber-text">Оценка невозможна: ${p.not_assessable}</div>` : ""}
+    ${p.nonconformance_resolved + p.not_assessable_resolved ? `<div class="muted">Решено позднее: ${p.nonconformance_resolved + p.not_assessable_resolved}</div>` : ""}`;
   tip.classList.remove("hidden");
 }
 
-function nodeCounts(live) {
-  const counts = {};
-  for (const item of live.items) {
-    if (S.itemType && item.item_type !== S.itemType) continue;
-    const node = item.node_id || "__entry";
-    counts[node] ??= {};
-    counts[node][item.status] = (counts[node][item.status] || 0) + 1;
-  }
-  return counts;
+function selectNode(nodeId) {
+  S.selectedNode = nodeId;
+  if (S.live) renderGraph(S.live);
+  $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.node === nodeId));
+}
+
+// Круг со значением внутри. Большое число не помещается — полное значение в подсказке.
+function pill(cx, value, fill, label, extra = "") {
+  const text = value > 999 ? `${Math.floor(value / 1000)}k` : String(value);
+  return `<g class="count-pill ${extra}"><title>${esc(label)}: ${value}</title><circle cx="${cx}" cy="0" r="${PILL_R}" fill="${fill}"/><text x="${cx}" y="4" text-anchor="middle" class="count light">${text}</text></g>`;
 }
 
 function renderGraph(live) {
   if (!S.geometry || S.geometry.key !== geometry(live.nodes).key) buildGraph(live);
   const svg = $("graph");
-  const counts = nodeCounts(live);
+  const f = focus();
   for (const raw of live.nodes) {
     const el = svg.querySelector(`.node[data-node="${CSS.escape(raw.node_id)}"]`);
     if (!el) continue;
     el.classList.remove("state-ok", "state-warning", "state-alarm");
     el.classList.add(`state-${raw.state}`);
-    el.classList.toggle("selected", S.drawer?.node === raw.node_id);
-    el.querySelector('[data-f="passed"]').textContent = `прошло ${raw.passed}`;
-    const badges = [];
-    let x = NODE_W - 6;
-    const addBadge = (value, tone, kind, title) => {
-      const w = 18 + String(value).length * 7;
-      x -= w;
-      badges.push(`<g class="badge-g" data-badge="${kind}"><title>${title}</title><rect class="count-bg ${tone}" x="${x}" y="-12" width="${w}" height="24" rx="12"/><text class="count light" x="${x + w / 2}" y="4" text-anchor="middle">${value}</text></g>`);
-      x -= 4;
-    };
-    if (raw.open_detections) addBadge(raw.open_detections, "bad", "detected", "обнаружено здесь и ждёт решения — нажмите");
-    if (raw.originated) addBadge(raw.originated, "warn", "originated", "возникло здесь по оценке системы — нажмите");
-    el.querySelector('[data-f="badges"]').innerHTML = badges.join("");
-    const c = counts[raw.node_id] || {};
-    let cx = 4;
-    el.querySelector('[data-f="counts"]').innerHTML = STATUS.filter(([s]) => c[s]).map(([s, color, label]) => {
-      const text = String(c[s]);
-      const pill = `<g class="count-pill"><title>${label}: ${text}</title><circle cx="${cx + 8}" cy="0" r="8" fill="${color}"/><text x="${cx + 20}" y="4" class="count">${text}</text></g>`;
-      cx += 30 + text.length * 7;
-      return pill;
+    el.classList.toggle("selected", S.selectedNode === raw.node_id);
+    el.classList.toggle("focused", !!f && f.node_id === raw.node_id);
+    el.querySelector('[data-f="passed"]').textContent = `Прошло: ${raw.passed}`;
+    const p = raw.problems;
+    const marks = [
+      [p.nonconformance, "var(--bad)", "Несоответствия в работе на этот момент"],
+      [p.not_assessable, "var(--amber)", "Оценка невозможна на этот момент"],
+      [p.nonconformance_resolved, "var(--resolved)", "Несоответствия, решённые позднее"],
+      [p.not_assessable_resolved, "var(--resolved-amber)", "Оценка невозможна, решено позднее"],
+    ].filter(([v]) => v);
+    let bx = NODE_W - PILL_R - 2;
+    el.querySelector('[data-f="badges"]').innerHTML = marks.map(([v, c, l]) => {
+      const out = `<g class="badge-g" data-badge="problems" transform="translate(0,-2)">${pill(bx, v, c, l)}</g>`;
+      bx -= PILL_R * 2 + 4;
+      return out;
+    }).join("");
+    let cx = PILL_R;
+    el.querySelector('[data-f="counts"]').innerHTML = STATUS.filter(([s]) => raw.counts[s]).map(([s, color, label]) => {
+      const out = pill(cx, raw.counts[s], color, label);
+      cx += PILL_R * 2 + 6;
+      return out;
     }).join("");
   }
+  renderFocusNote();
   animateMoves(live);
+}
+
+// Выделение выбранной проблемы держится при любом положении шкалы: кольцо вокруг этапа и
+// подпись над графом. Смена числа проблем у этапа в любую сторону подсвечивается вспышкой.
+function renderFocusNote() {
+  const f = focus();
+  const box = $("focus-note");
+  if (!f) { box.classList.add("hidden"); return; }
+  box.innerHTML = `<b>В фокусе:</b> ${esc(f.title)}${f.item_id ? `, <span class="mono">${esc(f.item_id)}</span>` : ""}, ${esc(nodeTitle(f.node_id))}, ${time(f.at, true)} <button class="btn small" id="focus-clear" title="Снять выделение">✕</button>`;
+  box.classList.remove("hidden");
+  box.querySelector("#focus-clear").addEventListener("click", () => { S.focusByLane[lane()] = null; renderGraph(S.live); renderTimeline(); });
 }
 
 function animateMoves(live) {
@@ -360,7 +404,7 @@ function animateMoves(live) {
     const a = g.pos[before.node_id], b = g.pos[item.node_id];
     if (!a || !b) continue;
     const direct = live.edges.some(([x, y]) => x === before.node_id && y === item.node_id);
-    const path = direct ? edgePath(a, b) : `M${a.x},${a.y + NODE_H / 2 + 16} L${b.x},${b.y + NODE_H / 2 + 16}`;
+    const path = direct ? edgePath(a, b) : `M${a.x},${a.y + NODE_H / 2 + 22} L${b.x},${b.y + NODE_H / 2 + 22}`;
     const color = (STATUS.find(([s]) => s === item.status) || STATUS[0])[1];
     const ball = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     ball.setAttribute("r", "8");
@@ -374,9 +418,10 @@ function animateMoves(live) {
     setTimeout(() => ball.remove(), 1200);
     started += 1;
   }
+  const total = (n) => n.problems.nonconformance + n.problems.not_assessable + n.problems.nonconformance_resolved + n.problems.not_assessable_resolved;
   for (const n of live.nodes) {
     const before = S.prevNodes[n.node_id];
-    if (before && n.detections > before.detections) flash(g.pos[n.node_id]);
+    if (before && total(before) !== total(n)) flash(g.pos[n.node_id]);
   }
   S.prevNodes = Object.fromEntries(live.nodes.map((n) => [n.node_id, n]));
   S.prevItems = next;
@@ -422,97 +467,176 @@ function flash(n) {
   }));
 })();
 
-// --- шкала времени -------------------------------------------------------------------------------------------
+// --- шкала времени: промежуток с двумя ползунками -------------------------------------------------------------
+
+// Промежуток задаёт и момент графа (его конец), и срез статистики этапов (от начала до
+// конца). Конец «сейчас» означает текущее время: граф живой. Длина по умолчанию — из
+// конфигурации: календарные сутки или смена.
+const WINDOWS = { day: "Сутки", shift: "Смена", all: "Всё время" };
 
 async function refreshTimeline() {
   if (S.view !== "line") return;
   S.timeline = await api(`/api/lines/${S.lineId}/timeline`);
+  S.windowMode ??= S.timeline.window?.default || "day";
   renderTimeline();
 }
 
+const tlStart = () => new Date(S.timeline.start).getTime();
+const tlEnd = () => Math.max(new Date(S.timeline.end).getTime(), tlStart() + 60000);
+const untilMs = () => (S.range.until ? new Date(S.range.until).getTime() : tlEnd());
+
+function windowStart(endMs) {
+  const w = S.timeline.window || { shift_hours: 8, timezone_offset_h: 3 };
+  if (S.windowMode === "all") return tlStart();
+  if (S.windowMode === "shift") return Math.max(tlStart(), endMs - w.shift_hours * 3600000);
+  // Календарные сутки в поясе предприятия: полночь того дня, в который попадает конец.
+  const offset = w.timezone_offset_h * 3600000;
+  const local = new Date(endMs + offset);
+  local.setUTCHours(0, 0, 0, 0);
+  return Math.max(tlStart(), local.getTime() - offset);
+}
+const sinceMs = () => (S.range.since ? new Date(S.range.since).getTime() : windowStart(untilMs()));
+
 function renderMoment() {
   $("moment-badge").innerHTML = S.at
-    ? `<span class="moment">на ${time(S.at, true)} ${badge("прошлое", "warn")} <button class="btn small" id="to-live">к текущему ▶▶</button></span>`
-    : `<span class="moment">${badge("сейчас", "ok")}</span>`;
+    ? `<span class="moment">${badge("Прошлое", "warn")} на ${time(S.at, true)} <button class="btn small" id="to-live">К текущему моменту</button></span>`
+    : `<span class="moment">${badge("Сейчас", "ok")}</span>`;
   $("to-live")?.addEventListener("click", goLive);
+}
+
+const MARK_TITLE = {
+  problem: (m) => `${m.problem_kind === "not_assessable" ? "Оценка невозможна" : `Несоответствие: ${m.title}`}, изделие ${m.item_id}`,
+  resolved: (m) => `${{ closed: "Устранено", rejected: "Сигнал отклонён", rechecked: "Повторная проверка выполнена" }[m.resolution] || "Решено"}: ${m.title}, изделие ${m.item_id}`,
+  machine_fault: (m) => `Сбой станка ${m.equipment_id}${m.message ? `: ${m.message}` : ""}`,
+  machine_ok: (m) => `Станок ${m.equipment_id} вернулся в работу`,
+};
+
+function markerClass(m) {
+  if (m.kind === "problem") return m.problem_kind === "not_assessable" ? "m-amber" : `m-bad sev-${m.severity || "major"}`;
+  if (m.kind === "machine_fault") return "m-bad";
+  return "m-ok";
 }
 
 function renderTimeline() {
   const t = S.timeline;
   if (!t?.start) { $("timeline").innerHTML = `<div class="muted">Событий на линии ещё нет.</div>`; return; }
-  const start = new Date(t.start).getTime();
-  const end = Math.max(new Date(t.end).getTime(), start + 60000);
-  const cur = S.at ? new Date(S.at).getTime() : end;
-  const pos = (ms) => `${Math.min(100, Math.max(0, ((ms - start) / (end - start)) * 100))}%`;
-  const label = (m) => (m.kind === "detected" ? `обнаружено ${m.defect_type} · ${m.item_id}` : m.kind === "decision" ? `решение: ${L.action[m.action] || m.action}` : `отклонение станка ${m.equipment_id}`);
+  const start = tlStart(), end = tlEnd();
+  const lo = sinceMs(), hi = untilMs();
+  const pos = (ms) => Math.min(100, Math.max(0, ((ms - start) / (end - start)) * 100));
+  const current = lane();
+  const f = focus();
+  const markers = t.markers.map((m, i) => ({ ...m, i })).filter((m) => m.lane === current);
+  const legend = current === "items"
+    ? `<i class="m-bad"></i>Несоответствие <i class="m-amber"></i>Оценка невозможна <i class="m-ok"></i>Решено`
+    : `<i class="m-bad"></i>Сбой станка <i class="m-ok"></i>Станок в работе`;
+  const laneSwitch = laneFixed() ? "" : `<div class="seg" role="group" aria-label="Вид отслеживания">${[["items", "Дефекты"], ["machines", "Отклонения"]].map(([k, l]) => `<button class="btn small ${current === k ? "active" : ""}" data-lane="${k}">${l}</button>`).join("")}</div>`;
   $("timeline").innerHTML = `
     <div class="tl-head">
       <div class="row">
-        <button class="btn small" data-tl="start" title="В начало">⏮</button>
-        <button class="btn small" data-tl="back">−10 мин</button>
+        <button class="btn small" data-tl="back" title="Сдвинуть промежуток назад на 10 минут">−10 мин</button>
         <button class="btn small primary" data-tl="play">${S.playing ? "⏸ Пауза" : "▶ Воспроизвести"}</button>
-        <button class="btn small" data-tl="fwd">+10 мин</button>
+        <button class="btn small" data-tl="fwd" title="Сдвинуть промежуток вперёд на 10 минут">+10 мин</button>
         <select data-tl="speed" title="Скорость воспроизведения">${[60, 300, 1800].map((v) => `<option value="${v}" ${S.playSpeed === v ? "selected" : ""}>×${v}</option>`).join("")}</select>
         <button class="btn small ${S.at ? "" : "active"}" data-tl="live">Сейчас</button>
+        <div class="seg" role="group" aria-label="Длина промежутка">${Object.entries(WINDOWS).map(([k, l]) => `<button class="btn small ${S.windowMode === k && !S.range.since ? "active" : ""}" data-window="${k}">${l}</button>`).join("")}</div>
+        ${laneSwitch}
       </div>
-      <div class="muted small"><b>${time(S.at || t.end, true)}</b> · <span class="tl-key"><i class="m-detected"></i>обнаружение <i class="m-decision"></i>решение <i class="m-deviation"></i>отклонение станка</span></div>
+      <div class="muted small">Промежуток: <b>${time(new Date(lo).toISOString(), true)}</b> — <b>${S.range.until ? time(S.range.until, true) : "сейчас"}</b> · <span class="tl-key">${legend}</span></div>
     </div>
-    <div class="tl-track">
-      <div class="tl-markers">${t.markers.map((m, i) => `<button class="tl-mark m-${m.kind}" style="left:${pos(new Date(m.at).getTime())}" data-mark="${i}" title="${esc(`${time(m.at, true)} · ${label(m)}`)}"></button>`).join("")}</div>
-      <input type="range" id="tl-range" min="${start}" max="${end}" step="1000" value="${cur}" aria-label="Момент времени">
+    <div class="tl-track" id="tl-track">
+      <div class="tl-markers">${markers.map((m) => {
+        const focused = f && ((m.problem_id && m.problem_id === f.problem_id) || (!m.problem_id && f.node_id === m.node_id && f.at === m.at));
+        const outside = new Date(m.at).getTime() < lo || new Date(m.at).getTime() > hi;
+        return `<button class="tl-mark ${markerClass(m)} ${focused ? "focused" : ""} ${outside ? "outside" : ""}" style="left:${pos(new Date(m.at).getTime())}%" data-mark="${m.i}" title="${esc(`${time(m.at, true)}. ${MARK_TITLE[m.kind](m)}`)}"></button>`;
+      }).join("")}</div>
+      <div class="tl-rail"><div class="tl-sel" style="left:${pos(lo)}%;width:${Math.max(0.3, pos(hi) - pos(lo))}%"></div>
+        <button class="tl-handle" data-handle="since" style="left:${pos(lo)}%" aria-label="Начало промежутка" title="Начало промежутка"></button>
+        <button class="tl-handle end" data-handle="until" style="left:${pos(hi)}%" aria-label="Конец промежутка" title="Конец промежутка: момент, который показывает граф"></button></div>
     </div>
     <div class="tl-axis"><span>${time(t.start)}</span><span>${time(new Date((start + end) / 2).toISOString())}</span><span>${time(t.end)}</span></div>`;
   const box = $("timeline");
-  box.querySelector("#tl-range").addEventListener("input", (e) => scheduleAt(Number(e.target.value) >= end ? null : new Date(Number(e.target.value)).toISOString()));
-  box.querySelectorAll("[data-mark]").forEach((b) => b.addEventListener("click", () => {
-    const m = t.markers[Number(b.dataset.mark)];
-    jumpTo(m.at, m.kind === "detected" ? { nc: m.nc_id } : { node: m.node_id });
-  }));
-  box.querySelector('[data-tl="start"]').addEventListener("click", () => jumpTo(t.start));
-  box.querySelector('[data-tl="back"]').addEventListener("click", () => jumpTo(new Date(cur - 600000).toISOString()));
-  box.querySelector('[data-tl="fwd"]').addEventListener("click", () => (cur + 600000 >= end ? goLive() : jumpTo(new Date(cur + 600000).toISOString())));
+  bindHandles(box, start, end);
+  box.querySelectorAll("[data-mark]").forEach((b) => b.addEventListener("click", () => selectMarker(t.markers[Number(b.dataset.mark)])));
+  box.querySelector('[data-tl="back"]').addEventListener("click", () => shiftRange(-600000));
+  box.querySelector('[data-tl="fwd"]').addEventListener("click", () => shiftRange(600000));
   box.querySelector('[data-tl="live"]').addEventListener("click", goLive);
   box.querySelector('[data-tl="speed"]').addEventListener("change", (e) => { S.playSpeed = Number(e.target.value); });
   box.querySelector('[data-tl="play"]').addEventListener("click", () => (S.playing ? stopPlaying() : startPlaying()));
+  box.querySelectorAll("[data-window]").forEach((b) => b.addEventListener("click", () => { S.windowMode = b.dataset.window; S.range.since = null; renderTimeline(); refreshAll(); }));
+  box.querySelectorAll("[data-lane]").forEach((b) => b.addEventListener("click", () => { S.lane = b.dataset.lane; renderTimeline(); if (S.live) renderGraph(S.live); }));
 }
 
-let atTimer = null;
-function scheduleAt(iso) {
-  S.at = iso;
-  renderMoment();
-  clearTimeout(atTimer);
-  atTimer = setTimeout(refreshAll, 250);
+// Ползунки тянутся мышью; конец промежутка у правого края — это «сейчас».
+function bindHandles(box, start, end) {
+  const rail = box.querySelector(".tl-rail");
+  box.querySelectorAll(".tl-handle").forEach((h) => h.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const which = h.dataset.handle;
+    const rect = rail.getBoundingClientRect();
+    const toMs = (x) => start + Math.min(1, Math.max(0, (x - rect.left) / rect.width)) * (end - start);
+    const move = (ev) => {
+      const ms = toMs(ev.clientX);
+      h.style.left = `${((ms - start) / (end - start)) * 100}%`;
+      h.dataset.ms = ms;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const ms = Number(h.dataset.ms || NaN);
+      if (Number.isNaN(ms)) return;
+      if (which === "until") {
+        S.range.until = ms >= end - 1000 ? null : new Date(ms).toISOString();
+        if (sinceMs() > untilMs()) S.range.since = null;
+      } else S.range.since = new Date(Math.min(ms, untilMs() - 60000)).toISOString();
+      applyRange();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }));
 }
 
-async function jumpTo(iso, focus = {}) {
-  S.at = new Date(new Date(iso).getTime() + 1000).toISOString();
+function applyRange() {
+  S.at = S.range.until;
   renderTimeline();
-  await refreshAll();
-  if (focus.nc) await openNc(focus.nc);
-  else if (focus.node) await openNode(focus.node);
+  renderMoment();
+  return refreshAll();
+}
+
+function shiftRange(deltaMs) {
+  const end = tlEnd();
+  const next = untilMs() + deltaMs;
+  const width = untilMs() - sinceMs();
+  S.range.until = next >= end ? null : new Date(Math.max(tlStart(), next)).toISOString();
+  if (S.range.since) S.range.since = new Date(Math.max(tlStart(), untilMs() - width)).toISOString();
+  applyRange();
+}
+
+// Переход к моменту события: конец промежутка ставится сразу после него, начало — по
+// выбранной длине промежутка.
+async function jumpTo(iso) {
+  S.range.until = new Date(new Date(iso).getTime() + 1000).toISOString();
+  S.range.since = null;
+  await applyRange();
 }
 
 function goLive() {
   stopPlaying();
-  S.at = null;
-  renderTimeline();
-  refreshAll();
+  S.range = { since: null, until: null };
+  applyRange();
 }
 
 function startPlaying() {
-  const t = S.timeline;
-  if (!t) return;
-  if (!S.at) S.at = t.start;
+  if (!S.timeline) return;
+  if (!S.range.until) S.range.until = new Date(sinceMs()).toISOString();
   let busy = false;
   S.playing = setInterval(async () => {
     if (busy) return;
-    const next = new Date(S.at).getTime() + S.playSpeed * 1000;
-    if (next >= new Date(t.end).getTime()) { goLive(); return; }
-    S.at = new Date(next).toISOString();
-    const range = $("tl-range");
-    if (range) range.value = next;
+    const next = untilMs() + S.playSpeed * 1000;
+    if (next >= tlEnd()) { goLive(); return; }
+    S.range.until = new Date(next).toISOString();
+    S.at = S.range.until;
     busy = true;
-    try { await refreshLive(); } finally { busy = false; }
+    try { renderTimeline(); await refreshLive(); } finally { busy = false; }
   }, 1000);
   renderTimeline();
 }
@@ -522,7 +646,26 @@ function stopPlaying() {
   if (S.view === "line" && S.timeline) renderTimeline();
 }
 
-// --- этапы: выпадающая сверху панель, скрыта до нажатия ---------------------------------------------------------
+// Отметка на шкале: переход к её моменту, фокус на событии, подробности во вкладке.
+async function selectMarker(m) {
+  const focusValue = { lane: m.lane, problem_id: m.problem_id || null, node_id: m.node_id, item_id: m.item_id || null, at: m.at, title: m.problem_id ? m.title : MARK_TITLE[m.kind](m), kind: m.kind };
+  S.focusByLane[m.lane] = focusValue;
+  selectNode(m.node_id);
+  await jumpTo(m.at);
+  if (m.problem_id) await openProblem(m.problem_id);
+  else await openNode(m.node_id);
+}
+
+// Проблема из очереди: фокус и переход к моменту обнаружения выполняются сразу.
+async function selectProblem(p) {
+  S.focusByLane.items = { lane: "items", problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
+  if (!laneFixed()) S.lane = "items";
+  selectNode(p.node_id);
+  await jumpTo(p.at);
+  await openProblem(p.problem_id);
+}
+
+// --- этапы: развёртка графа сверху, в ширину графа ------------------------------------------------------------
 
 function toggleStages() { S.stagesOpen ? closeStages() : openStages(); }
 function openStages() {
@@ -540,34 +683,44 @@ function closeStages() {
   if (S.view === "line") renderTop();
 }
 $("stages-close").addEventListener("click", closeStages);
-["f-type", "f-shift", "f-since", "f-until"].forEach((id) => $(id).addEventListener("change", refreshStages));
+["f-type", "f-shift"].forEach((id) => $(id).addEventListener("change", refreshStages));
 
-function stageQuery() {
+// Срез статистики: промежуток шкалы времени плюс тип изделия и смена.
+function stageQuery({ total = false } = {}) {
   const p = new URLSearchParams();
-  const type = $("f-type").value, shift = $("f-shift").value, since = $("f-since").value, until = $("f-until").value;
+  const type = $("f-type").value, shift = $("f-shift").value;
   if (type) p.set("item_type", type);
   if (shift) p.set("shift", shift);
-  if (since) p.set("since", new Date(since).toISOString());
-  if (until) p.set("until", new Date(until).toISOString());
-  if (S.at) p.set("at", S.at);
+  if (!total && S.timeline?.start) {
+    p.set("since", new Date(sinceMs()).toISOString());
+    if (S.range.until) { p.set("until", S.range.until); p.set("at", S.range.until); }
+  }
   return p.toString();
 }
 
+// Значение за промежуток / значение на текущий момент.
+const pair = (a, b) => `${a ?? "—"} <span class="muted">/ ${b ?? "—"}</span>`;
+
 async function refreshStages() {
-  const rows = await api(`/api/lines/${S.lineId}/stages?${stageQuery()}`);
-  $("stages").innerHTML = `<table><tr><th>этап</th><th class="num">изделий</th><th class="num">выполнений / проверок</th><th class="num">в работе</th><th class="num">доработок</th><th class="num">длительность</th><th class="num">откл. станка</th><th class="num">обнаружено</th><th class="num">возникло</th><th class="num">без признаков</th></tr>
+  const [rows, totals] = await Promise.all([api(`/api/lines/${S.lineId}/stages?${stageQuery()}`), api(`/api/lines/${S.lineId}/stages?${stageQuery({ total: true })}`)]);
+  const all = Object.fromEntries(totals.map((r) => [r.node_id, r]));
+  $("stages-period").textContent = `Промежуток: ${time(new Date(sinceMs()).toISOString(), true)} — ${S.range.until ? time(S.range.until, true) : "сейчас"}`;
+  $("stages").innerHTML = `<p class="muted small">В каждой ячейке: значение за выбранный промежуток / значение на текущий момент.</p>
+    <table><tr><th>Этап</th><th class="num">Изделий</th><th class="num">Выполнений, проверок</th><th class="num">В работе</th><th class="num">Доработок</th><th class="num">Длительность</th><th class="num">Отклонений станка</th><th class="num">Обнаружено</th><th class="num">Без признаков</th></tr>
     ${rows.map((r) => {
+      const t = all[r.node_id] || {};
       const op = r.kind === "operation";
       const median = r.median_reported_s ?? r.median_active_s;
-      return `<tr class="click" data-node="${esc(r.node_id)}"><td>${op ? "⚙" : "◉"} ${esc(r.title)}</td><td class="num">${r.items}</td><td class="num">${op ? r.runs : r.checks}</td><td class="num">${op ? r.in_progress : "—"}</td>
-        ${op ? gcell(r.rework_runs, "rework", ratio(r.rework_runs, r.runs)) : `<td class="num">—</td>`}
-        ${op ? gcell(mins(median), "duration", median == null ? null : ratio(median, r.norm_duration_s)) : `<td class="num">—</td>`}
-        ${op ? gcell(r.deviations, "deviations", ratio(r.deviations, r.runs)) : `<td class="num">—</td>`}
-        ${op ? `<td class="num">—</td>` : gcell(r.first_detections, "found", ratio(r.found, r.checks))}
-        ${gcell(r.defects_originated, "originated", ratio(r.defects_originated, r.items))}
-        ${op ? `<td class="num">—</td>` : gcell(pct(r.pass_rate), "found", r.pass_rate == null ? null : 1 - r.pass_rate)}</tr>`;
+      const medianAll = t.median_reported_s ?? t.median_active_s;
+      const dash = `<td class="num">—</td>`;
+      return `<tr class="click ${S.selectedNode === r.node_id ? "selected" : ""}" data-node="${esc(r.node_id)}"><td>${op ? "⚙" : "◉"} ${esc(r.title)}</td><td class="num">${pair(r.items, t.items)}</td><td class="num">${pair(op ? r.runs : r.checks, op ? t.runs : t.checks)}</td><td class="num">${op ? pair(r.in_progress, t.in_progress) : "—"}</td>
+        ${op ? gcell(pair(r.rework_runs, t.rework_runs), "rework", ratio(r.rework_runs, r.runs)) : dash}
+        ${op ? gcell(pair(mins(median), mins(medianAll)), "duration", median == null ? null : ratio(median, r.norm_duration_s)) : dash}
+        ${op ? gcell(pair(r.deviations, t.deviations), "deviations", ratio(r.deviations, r.runs)) : dash}
+        ${op ? dash : gcell(pair(r.first_detections, t.first_detections), "found", ratio(r.found, r.checks))}
+        ${op ? dash : gcell(pair(pct(r.pass_rate), pct(t.pass_rate)), "found", r.pass_rate == null ? null : 1 - r.pass_rate)}</tr>`;
     }).join("")}</table>${gradeLegend()}`;
-  $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.addEventListener("click", () => openNode(tr.dataset.node)));
+  $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.addEventListener("click", () => { selectNode(tr.dataset.node); openNode(tr.dataset.node); }));
 }
 
 // --- оценка показателей цветом ---------------------------------------------------------------------------------------
@@ -575,15 +728,15 @@ async function refreshStages() {
 // Четыре уровня вместо одного цвета: хорошо, терпимо, плохо, очень плохо. Пороги — верхние
 // границы первых трёх уровней, всё выше — «очень плохо». Пороги условные, для
 // демонстрации: на предприятии их задают технолог и ОТК под свой техпроцесс.
-const GRADES = [["good", "хорошо"], ["fair", "терпимо"], ["bad", "плохо"], ["critical", "очень плохо"]];
+const GRADES = [["good", "Хорошо"], ["fair", "Терпимо"], ["bad", "Плохо"], ["critical", "Очень плохо"]];
 const RULES = {
-  duration: { limits: [1.05, 1.2, 1.5], text: "медиана длительности к норме", fmt: (v) => `×${v.toFixed(2)}` },
-  rework: { limits: [0.02, 0.05, 0.1], text: "доля доработок среди выполнений", fmt: pct },
-  deviations: { limits: [0, 0.02, 0.05], text: "отклонений станка на выполнение", fmt: pct },
-  originated: { limits: [0.01, 0.03, 0.06], text: "дефектов, возникших здесь, на изделие", fmt: pct },
-  found: { limits: [0.02, 0.05, 0.1], text: "доля проверок с признаками дефекта", fmt: pct },
-  unassessable: { limits: [0.01, 0.03, 0.06], text: "доля проверок без оценки", fmt: pct },
-  open: { limits: [0, 2, 5], text: "несоответствий ждут решения", fmt: (v) => String(v) },
+  duration: { limits: [1.05, 1.2, 1.5], text: "Медиана длительности к норме", fmt: (v) => `×${v.toFixed(2)}` },
+  rework: { limits: [0.02, 0.05, 0.1], text: "Доля доработок среди выполнений", fmt: pct },
+  deviations: { limits: [0, 0.02, 0.05], text: "Отклонений станка на выполнение", fmt: pct },
+  originated: { limits: [0.01, 0.03, 0.06], text: "Дефектов, возникших на этапе, на изделие", fmt: pct },
+  found: { limits: [0.02, 0.05, 0.1], text: "Доля проверок с признаками дефекта", fmt: pct },
+  unassessable: { limits: [0.01, 0.03, 0.06], text: "Доля проверок без оценки", fmt: pct },
+  open: { limits: [0, 2, 5], text: "Несоответствий ждут решения", fmt: (v) => String(v) },
 };
 const ratio = (a, b) => (b ? a / b : null);
 
@@ -596,7 +749,7 @@ function grade(rule, value) {
 function gradeHint(rule, value) {
   const r = RULES[rule];
   const [a, b, c] = r.limits.map(r.fmt);
-  return `${r.text}: ${r.fmt(value)}. Хорошо — до ${a}, терпимо — до ${b}, плохо — до ${c}, выше — очень плохо (пороги условные).`;
+  return `${r.text}: ${r.fmt(value)}. Хорошо: до ${a}. Терпимо: до ${b}. Плохо: до ${c}. Выше: очень плохо. Пороги условные.`;
 }
 
 // Плитка показателя с оценкой: цвет полосы и подпись уровня, порог — во всплывающей подсказке.
@@ -604,9 +757,9 @@ function gkpi(value, label, rule = null, measure = null) {
   const g = rule ? grade(rule, measure) : null;
   if (g == null) return kpi(value, label);
   const [key, word] = GRADES[g];
-  return `<div class="kpi graded g-${key}" title="${esc(gradeHint(rule, measure))}"><b>${esc(value)}</b><span>${esc(label)}</span><em>${word}</em></div>`;
+  return `<div class="kpi graded g-${key}" title="${esc(gradeHint(rule, measure))}"><b>${value}</b><span>${esc(label)}</span><em>${word}</em></div>`;
 }
-const gradeLegend = () => `<div class="grade-legend">${GRADES.map(([k, w]) => `<span><i class="g-${k}"></i>${w}</span>`).join("")}<span class="muted">наведите на плитку — порог</span></div>`;
+const gradeLegend = () => `<div class="grade-legend">${GRADES.map(([k, w]) => `<span><i class="g-${k}"></i>${w}</span>`).join("")}<span class="muted">Порог показан в подсказке.</span></div>`;
 const gcell = (content, rule, measure) => {
   const g = grade(rule, measure);
   return g == null ? `<td class="num">${content}</td>` : `<td class="num"><span class="gcell g-${GRADES[g][0]}" title="${esc(gradeHint(rule, measure))}">${content}</span></td>`;
@@ -620,19 +773,32 @@ async function refreshOverview() {
   renderRolePanel();
 }
 
-const kpi = (value, label, tone = "") => `<div class="kpi"><b class="${tone}">${esc(value)}</b><span>${esc(label)}</span></div>`;
-const nodeTitle = (id) => S.geometry?.pos[id]?.title || id;
+// Очередь проблем всегда о настоящем: она не следует за шкалой времени.
+async function refreshQueue() {
+  if (S.view !== "line") return;
+  S.queue = await api(`/api/lines/${S.lineId}/problems`);
+  if (S.viewRole === "controller") renderRolePanel();
+}
 
-function queueList(queue) {
-  if (!queue.length) return `<div class="empty">Очередь пуста.</div>`;
-  return `<ul class="list">${queue.map((n) => `<li><div class="row spread"><a href="#" data-nc="${esc(n.nc_id)}"><b>${esc(n.defect_type)}</b></a>${badge(n.severity || "—", n.severity === "critical" ? "bad" : n.severity === "major" ? "warn" : "plain")}</div>
-    <div class="muted small mono">${esc(n.item_id)} · ${time(n.first_detected_at, true)}</div>
-    <button class="btn small" style="margin-top:6px" data-rollback="${esc(n.nc_id)}" data-at="${esc(n.first_detected_at)}" title="Показать линию в момент обнаружения">⟲ к моменту отказа</button></li>`).join("")}</ul>`;
+const kpi = (value, label, tone = "") => `<div class="kpi"><b class="${tone}">${value}</b><span>${esc(label)}</span></div>`;
+const nodeTitle = (id) => S.geometry?.pos[id]?.title || id;
+const SEVERITY = { critical: "Критичное", major: "Значительное", minor: "Малозначительное" };
+const problemClass = (p) => (p.kind === "not_assessable" ? "sev-amber" : `sev-${p.severity || "major"}`);
+
+function queueList(q) {
+  if (!q) return `<div class="empty">Загрузка.</div>`;
+  const f = S.focusByLane.items;
+  const row = (p, resolved = false) => `<li class="problem ${resolved ? "resolved" : problemClass(p)} ${f?.problem_id === p.problem_id ? "focused" : ""}" data-problem="${esc(p.problem_id)}">
+      <div class="row spread"><b>${esc(p.title)}</b><span class="small">${resolved ? esc({ closed: "Устранено", rejected: "Сигнал отклонён", rechecked: "Проверено повторно" }[p.resolution] || "Решено") : esc(p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div>
+      <div class="small">Изделие <span class="mono">${esc(p.item_id)}</span>. ${esc(nodeTitle(p.node_id))}.</div>
+      <div class="muted small">Обнаружено ${time(p.at, true)}${resolved ? `. Решено ${time(p.resolved_at, true)}` : ""}.</div></li>`;
+  return `${q.active.length ? `<ul class="list">${q.active.map((p) => row(p)).join("")}</ul>` : `<div class="empty">Активных проблем нет.</div>`}
+    <h3>Решено · ${q.resolved_total}</h3>${q.resolved.length ? `<ul class="list">${q.resolved.slice(0, 15).map((p) => row(p, true)).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
 }
 
 // Состояние станка цветом: работа — зелёный, отклонение режима — красный, предупреждение —
 // жёлтый, остановка — серый. Полоса последних состояний показывает сбой без чтения чисел.
-const MACHINE_STATE = { running: ["var(--ok)", "в работе"], idle: ["var(--line)", "простой"], warning: ["var(--fair)", "предупреждение"], deviation: ["var(--bad)", "режим вне допуска"], stopped: ["var(--muted)", "остановка"] };
+const MACHINE_STATE = { running: ["var(--ok)", "В работе"], idle: ["var(--line)", "Простой"], warning: ["var(--fair)", "Предупреждение"], deviation: ["var(--bad)", "Режим вне допуска"], stopped: ["var(--muted)", "Остановка"] };
 const stateStrip = (states) => `<div class="strip">${states.map((st) => `<i style="background:${(MACHINE_STATE[st] || MACHINE_STATE.idle)[0]}" title="${esc((MACHINE_STATE[st] || [0, st])[1])}"></i>`).join("")}</div>`;
 
 const plural = (n, one, few, many) => {
@@ -644,8 +810,8 @@ function machinesList(machines) {
   if (!machines.length) return `<div class="empty">Станков нет.</div>`;
   return `<ul class="list">${machines.map((m) => {
     const g = grade("deviations", ratio(m.deviations, m.runs));
-    return `<li class="click" data-node="${esc(m.node_id)}"><div class="row spread"><b class="small">${esc(m.title)}</b>${m.deviations ? `<span class="gcell g-${GRADES[g ?? 3][0]}" title="${esc(gradeHint("deviations", ratio(m.deviations, m.runs)))}">${m.deviations} ${plural(m.deviations, "сбой", "сбоя", "сбоев")}</span>` : badge("без сбоев", "ok")}</div>
-      <div class="muted small">${esc(m.stage)} · ${esc(m.equipment_id)}${m.last_deviation_at ? ` · последний ${time(m.last_deviation_at, true)}` : ""}</div>${stateStrip(m.strip)}</li>`;
+    return `<li class="click" data-node="${esc(m.node_id)}"><div class="row spread"><b class="small">${esc(m.title)}</b>${m.deviations ? `<span class="gcell g-${GRADES[g ?? 3][0]}" title="${esc(gradeHint("deviations", ratio(m.deviations, m.runs)))}">${m.deviations} ${plural(m.deviations, "сбой", "сбоя", "сбоев")}</span>` : badge("Без сбоев", "ok")}</div>
+      <div class="muted small">${esc(m.stage)}, ${esc(m.equipment_id)}${m.last_deviation_at ? `. Последний сбой ${time(m.last_deviation_at, true)}` : ""}</div>${stateStrip(m.strip)}</li>`;
   }).join("")}</ul>`;
 }
 
@@ -656,32 +822,38 @@ function renderRolePanel() {
   const role = S.viewRole;
   let html;
   if (role === "controller") {
-    html = `<div class="card-head"><h2>Очередь на решение</h2>${badge(k.open_nonconformances, k.open_nonconformances ? "bad" : "ok")}</div>${queueList(o.queue)}`;
+    const n = S.queue?.active.length ?? 0;
+    html = `<div class="card-head"><h2>Очередь на решение</h2>${badge(n, n ? "bad" : "ok")}</div>
+      <p class="muted small">Текущие проблемы линии. Шкала времени на очередь не влияет.</p>${queueList(S.queue)}`;
   } else if (role === "master") {
-    html = `<div class="card-head"><h2>Сейчас на линии</h2></div><div class="kpis">${kpi(k.in_progress_runs, "операций в работе")}${kpi(k.late_events, "событий опоздало")}</div>
-      <h3>В работе</h3>${o.in_progress.length ? `<ul class="list">${o.in_progress.slice(0, 12).map((r) => `<li class="click" data-item="${esc(r.item_id)}"><b class="mono small">${esc(r.item_id)}</b><div class="muted small">${esc(nodeTitle(r.node_id))} · ${esc(r.operator_id || "")}</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
-      <h3>Отклонения оборудования</h3>${o.deviations.length ? `<ul class="list">${o.deviations.map((d) => `<li class="click" data-node="${esc(d.node_id)}"><b>${esc(d.equipment_id)}</b> ${badge(d.state, "warn")}<div class="muted small">${time(d.at, true)}</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
+    html = `<div class="card-head"><h2>Состояние линии</h2></div><div class="kpis">${kpi(k.in_progress_runs, "Операций в работе")}${kpi(k.late_events, "Событий с опозданием")}</div>
+      <h3>В работе</h3>${o.in_progress.length ? `<ul class="list">${o.in_progress.slice(0, 12).map((r) => `<li class="click" data-item="${esc(r.item_id)}"><b class="mono small">${esc(r.item_id)}</b><div class="muted small">${esc(nodeTitle(r.node_id))}, оператор ${esc(r.operator_id || "не указан")}</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
+      <h3>Отклонения оборудования</h3>${o.deviations.length ? `<ul class="list">${o.deviations.map((d) => `<li class="click" data-node="${esc(d.node_id)}"><b>${esc(d.equipment_id)}</b> ${badge(MACHINE_STATE[d.state]?.[1] || d.state, "warn")}<div class="muted small">${time(d.at, true)}</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
       <h3>Пропуски сообщений</h3>${Object.keys(o.source_gaps).length ? `<ul class="plain">${Object.entries(o.source_gaps).map(([s, g]) => `<li class="mono small">${esc(s)}: №${g.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(", ")}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
   } else if (role === "technologist") {
     const entries = Object.entries(o.origins_by_node);
     const max = Math.max(1, ...entries.map(([, v]) => v));
-    html = `<div class="card-head"><h2>Где возникают дефекты</h2></div>${entries.length ? `<div class="bars">${entries.map(([node, v]) => `<div class="bar-row" data-origin-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b>${v}</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}
+    html = `<div class="card-head"><h2>Этапы возникновения дефектов</h2></div>${entries.length ? `<div class="bars">${entries.map(([node, v]) => `<div class="bar-row" data-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b>${v}</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}
       <h3>Сбои оборудования</h3>${machinesList(o.machines || [])}
-      <h3>Гипотезы, не подтверждённые людьми</h3>${Object.keys(o.hypotheses).length ? `<ul class="plain">${Object.entries(o.hypotheses).map(([c, v]) => `<li>${esc(L.cause[c] || c)}: ${v}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
+      <h3>Гипотезы без подтверждения</h3>${Object.keys(o.hypotheses).length ? `<ul class="plain">${Object.entries(o.hypotheses).map(([c, v]) => `<li>${esc(L.cause[c] || c)}: ${v}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
       <button class="btn small" data-ocel style="margin-top:10px">Выгрузка OCEL 2.0</button>`;
   } else if (role === "manager") {
-    html = `<div class="card-head"><h2>Показатели линии</h2></div><div class="kpis">${kpi(k.items, "изделий")}${kpi(k.conforming, "годно")}${kpi(k.nonconforming, "с несоответствием", k.nonconforming ? "bad-text" : "")}${kpi(k.rework_runs, "доработок")}${kpi(k.open_nonconformances, "ждут решения")}${kpi(k.confirmed, "подтверждено")}</div>
-      <div class="stack" style="margin-top:12px">${can("line_manage") ? `<button class="btn" data-open="edit-line">Изменить линию</button>` : ""}${can("emulate") ? `<a class="btn" href="/emulator" target="_blank" rel="noopener">Пульт эмулятора ↗</a>` : ""}</div>`;
+    html = `<div class="card-head"><h2>Показатели линии</h2></div><div class="kpis">${kpi(k.items, "Изделий")}${kpi(k.conforming, "Годно")}${kpi(k.nonconforming, "С несоответствием", k.nonconforming ? "bad-text" : "")}${kpi(k.rework_runs, "Доработок")}${kpi(k.open_nonconformances, "Ждут решения")}${kpi(k.confirmed, "Подтверждено")}</div>
+      <div class="stack" style="margin-top:12px">${can("line_manage") ? `<button class="btn" data-open="edit-line">Изменить линию</button>` : ""}${can("emulate") ? `<a class="btn" href="/emulator">Пульт эмулятора</a>` : ""}</div>`;
   } else {
     html = `<div class="card-head"><h2>Администрирование</h2></div><div class="stack">${ADMIN_SECTIONS.map(([s, t]) => `<button class="btn" data-admin="${s}">${t}</button>`).join("")}<button class="btn" data-open="edit-line">Изменить линию</button></div>
-      <div class="kpis" style="margin-top:12px">${kpi(k.items, "изделий")}${kpi(k.open_nonconformances, "ждут решения")}</div>`;
+      <div class="kpis" style="margin-top:12px">${kpi(k.items, "Изделий")}${kpi(k.open_nonconformances, "Ждут решения")}</div>`;
   }
   const panel = $("role-panel");
   panel.innerHTML = html;
   bindCommon(panel);
-  panel.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => ({ economics: openEconomics, "edit-line": ACTIONS["edit-line"] })[b.dataset.open]()));
-  panel.querySelectorAll("[data-admin]").forEach((b) => b.addEventListener("click", () => openAdmin(b.dataset.admin)));
-  panel.querySelectorAll("[data-origin-node]").forEach((b) => b.addEventListener("click", () => openBadge(b.dataset.originNode, "originated")));
+  panel.querySelectorAll("[data-problem]").forEach((el) => el.addEventListener("click", () => {
+    const all = [...(S.queue?.active || []), ...(S.queue?.resolved || [])];
+    const p = all.find((x) => x.problem_id === el.dataset.problem);
+    if (p) selectProblem(p);
+  }));
+  panel.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => ({ "edit-line": ACTIONS["edit-line"] })[b.dataset.open]()));
+  panel.querySelectorAll("[data-admin]").forEach((b) => b.addEventListener("click", () => showAdmin(b.dataset.admin)));
   panel.querySelector("[data-ocel]")?.addEventListener("click", async () => {
     try {
       const data = await api("/api/export/ocel");
@@ -691,55 +863,89 @@ function renderRolePanel() {
 }
 
 function bindCommon(root) {
-  root.querySelectorAll("[data-nc]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); openNc(el.dataset.nc); }));
+  root.querySelectorAll("[data-nc]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); openProblem(el.dataset.nc); }));
   root.querySelectorAll("[data-item]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); openItem(el.dataset.item); }));
-  root.querySelectorAll("[data-node]").forEach((el) => el.addEventListener("click", () => openNode(el.dataset.node)));
-  root.querySelectorAll("[data-rollback]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); jumpTo(el.dataset.at, { nc: el.dataset.rollback }); }));
+  root.querySelectorAll("[data-node]").forEach((el) => el.addEventListener("click", () => { selectNode(el.dataset.node); openNode(el.dataset.node); }));
 }
 
-// --- правая панель деталей ---------------------------------------------------------------------------------------------
+// --- подробности под линией: вкладки ---------------------------------------------------------------------------
 
-// Детали выезжают справа поверх графа и прячутся обратно: граф всегда занимает всю ширину,
-// а подробности появляются только по нажатию — как и таблица этапов сверху.
-function drawer(html, state = {}) {
-  S.drawer = state;
-  const box = $("drawer");
-  box.innerHTML = `<button class="btn small drawer-close" data-drawer-close title="Закрыть (Esc)">✕</button>${html}`;
-  box.querySelector("[data-drawer-close]").addEventListener("click", drawerDefault);
-  bindCommon(box);
-  box.scrollTop = 0;
-  box.parentElement.classList.add("open");
-  if (S.live) renderGraph(S.live);
+// Вкладки подготовлены заранее и заполняются только по нажатию на событие. Пока ничего не
+// выбрано, в каждой вкладке — описание того, что в ней появится.
+const TABS = [
+  ["problem", "Проблема", "Выберите проблему в очереди, отметку на шкале времени или метку на этапе. Здесь появятся исходные сообщения анализатора, разбор системы и решения людей."],
+  ["item", "Изделие", "Выберите изделие. Здесь появится его маршрут по этапам в хронологии: проблемный проход и повторный проход показаны отдельно."],
+  ["stage", "Этап", "Выберите этап на графе или в таблице этапов. Здесь появятся его показатели за выбранный промежуток, станок и изделия."],
+  ["items", "Изделия линии", "Нажмите «Изделия» в шапке. Здесь появится таблица изделий с фильтрами по столбцам."],
+  ["economics", "Экономика", "Нажмите «Экономика» в шапке. Здесь появятся потери, затраты на годное изделие и параметры расчёта."],
+];
+
+function detailsFrame(active) {
+  return `<div class="tabs" role="tablist">${TABS.map(([k, title]) => `<button class="tab ${k === active ? "active" : ""} ${S.filled?.[k] ? "filled" : ""}" data-tab="${k}" role="tab">${title}</button>`).join("")}</div><div class="tab-body" id="tab-body"></div>`;
 }
 
-function drawerDefault() {
-  S.drawer = null;
-  $("drawer").parentElement.classList.remove("open");
-  if (S.live) renderGraph(S.live);
+function detailsEmpty() {
+  S.detail = null;
+  S.filled = {};
+  S.tabHtml = {};
+  showTab("problem");
 }
-window.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.drawer && !document.querySelector(".modal-backdrop")) drawerDefault(); });
 
-const ncRow = (n) => `<li><div class="row spread"><a href="#" data-nc="${esc(n.nc_id)}"><b>${esc(n.defect_type)}</b></a><span class="row">${badge(...(L.nc[n.status] || [n.status]))}<button class="btn small" data-rollback="${esc(n.nc_id)}" data-at="${esc(n.first_detected_at)}" title="Линия в момент обнаружения">⟲</button></span></div><div class="muted small mono">${esc(n.item_id)} · ${time(n.first_detected_at, true)}</div></li>`;
+function showTab(tab) {
+  const box = $("details");
+  box.innerHTML = detailsFrame(tab);
+  const body = box.querySelector("#tab-body");
+  const [, , hint] = TABS.find(([k]) => k === tab);
+  body.innerHTML = S.tabHtml?.[tab] || `<div class="tab-hint">${esc(hint)}</div>`;
+  bindCommon(body);
+  S.tabBind?.[tab]?.(body);
+  box.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+}
+
+function details(tab, html, state = {}, bind = null) {
+  S.detail = { tab, ...state };
+  S.filled = { ...(S.filled || {}), [tab]: true };
+  S.tabHtml = { ...(S.tabHtml || {}), [tab]: html };
+  S.tabBind = { ...(S.tabBind || {}), [tab]: bind };
+  showTab(tab);
+  if (!state.quiet) $("details").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 
 async function openNode(nodeId) {
   const load = async () => {
-    const d = await api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery()}`);
-    const s = d.stats;
+    const [d, all] = await Promise.all([api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery()}`), api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery({ total: true })}`)]);
+    const s = d.stats, t = all.stats;
     const op = s.kind === "operation";
     const median = s.median_reported_s ?? s.median_active_s;
     const stats = op
-      ? `${kpi(s.runs, "выполнений")}${kpi(s.in_progress, "в работе")}${gkpi(mins(median), `длительность, медиана (норма ${mins(s.norm_duration_s)})`, "duration", median == null ? null : ratio(median, s.norm_duration_s))}${gkpi(s.rework_runs, "доработок", "rework", ratio(s.rework_runs, s.runs))}${gkpi(s.deviations, "отклонений станка", "deviations", ratio(s.deviations, s.runs))}${gkpi(s.defects_originated, "дефектов возникло", "originated", ratio(s.defects_originated, s.items))}`
-      : `${kpi(s.checks, "проверок")}${gkpi(pct(s.pass_rate), "без признаков", "found", s.pass_rate == null ? null : 1 - s.pass_rate)}${gkpi(s.found, "с признаками", "found", ratio(s.found, s.checks))}${gkpi(s.not_assessable, "оценка невозможна", "unassessable", ratio(s.not_assessable, s.checks))}${kpi(s.first_detections, "впервые обнаружено")}${gkpi(s.open_detections, "ждут решения", "open", s.open_detections)}`;
-    const operators = op && Object.keys(s.by_operator).length ? `<h3>Операторы</h3><table><tr><th>оператор</th><th class="num">выполнений</th><th class="num">подтв. ошибок</th></tr>${Object.entries(s.by_operator).map(([w, r]) => `<tr><td class="mono">${esc(w)}</td><td class="num">${r.runs}</td><td class="num">${r.confirmed_errors}</td></tr>`).join("")}</table>` : "";
-    drawer(`<div class="card-head"><h2>${op ? "⚙" : "◉"} ${esc(s.title)}</h2>${badge(op ? "операция" : "контроль", "plain")}</div>
-      <div class="muted small mono" style="margin-bottom:10px">${esc(s.station_id)}${s.equipment_id ? ` · ${esc(s.equipment_id)}` : ""}${s.checkpoint_id ? ` · ${esc(s.checkpoint_id)}` : ""}</div>
-      <div class="kpis">${stats}</div>${gradeLegend()}
-      ${d.machine ? machinePanel(d.machine) : ""}
-      ${d.detected.length ? `<h3 class="bad-text">Обнаружено здесь</h3><ul class="list">${d.detected.slice(0, 8).map(ncRow).join("")}</ul>` : ""}
-      ${d.originated.length ? `<h3 class="origin-text">Возникло здесь (оценка системы)</h3><ul class="list">${d.originated.slice(0, 8).map(ncRow).join("")}</ul>` : ""}
-      ${operators}
-      ${d.items.length ? `<h3>Изделия на этапе</h3><table>${d.items.slice(0, 20).map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td>${op ? esc(r.outcome) : badge(...(L.result[r.outcome] || [r.outcome]))}</td><td class="muted small">${time(r.at, true)}</td></tr>`).join("")}</table>` : ""}`,
-    { node: nodeId, refresh: load });
+      ? `${kpi(pair(s.runs, t.runs), "Выполнений")}${kpi(pair(s.in_progress, t.in_progress), "В работе")}${gkpi(pair(mins(median), mins(t.median_reported_s ?? t.median_active_s)), `Длительность, медиана (норма ${mins(s.norm_duration_s)})`, "duration", median == null ? null : ratio(median, s.norm_duration_s))}${gkpi(pair(s.rework_runs, t.rework_runs), "Доработок", "rework", ratio(s.rework_runs, s.runs))}${gkpi(pair(s.deviations, t.deviations), "Отклонений станка", "deviations", ratio(s.deviations, s.runs))}${gkpi(pair(s.defects_originated, t.defects_originated), "Дефектов возникло", "originated", ratio(s.defects_originated, s.items))}`
+      : `${kpi(pair(s.checks, t.checks), "Проверок")}${gkpi(pair(pct(s.pass_rate), pct(t.pass_rate)), "Без признаков", "found", s.pass_rate == null ? null : 1 - s.pass_rate)}${gkpi(pair(s.found, t.found), "С признаками", "found", ratio(s.found, s.checks))}${gkpi(pair(s.not_assessable, t.not_assessable), "Оценка невозможна", "unassessable", ratio(s.not_assessable, s.checks))}${kpi(pair(s.first_detections, t.first_detections), "Впервые обнаружено")}${gkpi(s.open_detections, "Ждут решения", "open", s.open_detections)}`;
+    const operators = op && Object.keys(s.by_operator).length ? `<h3>Операторы</h3><table><tr><th>Оператор</th><th class="num">Выполнений</th><th class="num">Подтверждённых ошибок</th></tr>${Object.entries(s.by_operator).map(([w, r]) => `<tr><td class="mono">${esc(w)}</td><td class="num">${r.runs}</td><td class="num">${r.confirmed_errors}</td></tr>`).join("")}</table>` : "";
+    details("stage", `<div class="card-head"><h2>${op ? "⚙" : "◉"} ${esc(s.title)}</h2>${badge(op ? "Операция" : "Контроль", "plain")}</div>
+      <div class="muted small mono">${esc(s.station_id)}${s.equipment_id ? `, ${esc(s.equipment_id)}` : ""}${s.checkpoint_id ? `, ${esc(s.checkpoint_id)}` : ""}</div>
+      <p class="muted small">Значения: за выбранный промежуток / на текущий момент.</p>
+      <div class="detail-grid"><div><div class="kpis three">${stats}</div>${gradeLegend()}${operators}
+        ${d.items.length ? `<h3>Изделия на этапе</h3><table>${d.items.slice(0, 20).map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td>${op ? esc(L.runOutcome[r.outcome] || r.outcome) : badge(...(L.result[r.outcome] || [r.outcome]))}</td><td class="muted small">${time(r.at, true)}</td></tr>`).join("")}</table>` : ""}</div>
+        <div>${d.machine ? machinePanel(d.machine) : ""}</div></div>`,
+    { node: nodeId, refresh: () => load(), quiet: true });
+  };
+  await load();
+}
+
+// Проблемы этапа на выбранный момент: активные и решённые позднее, одной записью на проблему.
+async function openStageProblems(nodeId) {
+  const load = async () => {
+    const data = await api(withAt(`/api/lines/${S.lineId}/problems`));
+    const here = data.active.filter((p) => p.node_id === nodeId);
+    details("problem", `<div class="card-head"><h2>${esc(nodeTitle(nodeId))}</h2><span class="muted small">На ${S.at ? time(S.at, true) : "текущий момент"}</span></div>
+      ${here.length ? `<ul class="list">${here.map((p) => `<li class="problem ${p.resolved_now ? "resolved" : problemClass(p)}" data-problem="${esc(p.problem_id)}"><div class="row spread"><b>${esc(p.title)}</b><span class="small">${p.resolved_now ? "Решено позднее" : esc(p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div><div class="small">Изделие <span class="mono">${esc(p.item_id)}</span>. Обнаружено ${time(p.at, true)}.</div></li>`).join("")}</ul>` : `<div class="empty">На этот момент проблем на этапе нет.</div>`}`,
+    { node: nodeId, refresh: load }, (body) => body.querySelectorAll("[data-problem]").forEach((el) => el.addEventListener("click", () => {
+      const p = here.find((x) => x.problem_id === el.dataset.problem);
+      S.focusByLane.items = { lane: "items", problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
+      renderGraph(S.live);
+      renderTimeline();
+      openProblem(p.problem_id);
+    })));
   };
   await load();
 }
@@ -750,7 +956,7 @@ function machinePanel(m) {
   const readings = m.events.filter((e) => Object.keys(e.parameters).length);
   const charts = Object.entries(m.parameters).map(([key, spec]) => {
     const points = readings.filter((e) => e.parameters[key] != null).map((e) => ({ at: e.at, v: e.parameters[key], state: e.state }));
-    if (!points.length) return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="muted small">показаний нет</span></div></div>`;
+    if (!points.length) return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="muted small">Показаний нет</span></div></div>`;
     const values = points.map((p) => p.v);
     const lo = Math.min(spec.low, ...values), hi = Math.max(spec.high, ...values);
     const pad = (hi - lo) * 0.12 || 1;
@@ -759,69 +965,79 @@ function machinePanel(m) {
     const outside = points.filter((p) => p.v < spec.low || p.v > spec.high);
     const last = points[points.length - 1];
     const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
-    return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="small ${last.v < spec.low || last.v > spec.high ? "bad-text" : ""}">сейчас ${last.v} ${esc(spec.unit)}</span></div>
+    return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="small ${last.v < spec.low || last.v > spec.high ? "bad-text" : ""}">Последнее значение: ${last.v} ${esc(spec.unit)}</span></div>
       <svg viewBox="0 0 ${W} ${H}" class="param-chart"><rect x="0" y="${y(spec.high)}" width="${W}" height="${Math.max(1, y(spec.low) - y(spec.high))}" class="band"/><path d="${line}" class="trace"/>
-        ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${p.v < spec.low || p.v > spec.high ? 3.5 : 2}" class="${p.v < spec.low || p.v > spec.high ? "out" : "in"}"><title>${time(p.at, true)} · ${p.v} ${esc(spec.unit)}</title></circle>`).join("")}</svg>
-      <div class="muted small">допуск ${spec.low}–${spec.high} ${esc(spec.unit)} · вне допуска ${outside.length} из ${points.length}</div></div>`;
+        ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${p.v < spec.low || p.v > spec.high ? 3.5 : 2}" class="${p.v < spec.low || p.v > spec.high ? "out" : "in"}"><title>${time(p.at, true)}: ${p.v} ${esc(spec.unit)}</title></circle>`).join("")}</svg>
+      <div class="muted small">Допуск ${spec.low}–${spec.high} ${esc(spec.unit)}. Вне допуска: ${outside.length} из ${points.length}.</div></div>`;
   }).join("");
   const faults = m.events.filter((e) => e.state !== "running" && e.state !== "idle");
-  return `<h3>Станок</h3><div class="machine-card"><b>${esc(m.title)}</b><span class="muted small">${esc(m.type_title)}${m.processing ? ` · ${esc(m.processing)}` : ""} · ${esc(m.equipment_id)}</span></div>
-    <div class="muted small" style="margin:8px 0 4px">последние ${m.events.length} состояний · ${Object.entries(MACHINE_STATE).map(([, [c, w]]) => `<span class="dot" style="background:${c}"></span> ${w}`).join(" ")}</div>
+  return `<h3>Станок</h3><div class="machine-card"><b>${esc(m.title)}</b><span class="muted small">${esc(m.type_title)}${m.processing ? `, ${esc(m.processing)}` : ""}, ${esc(m.equipment_id)}</span></div>
+    <div class="muted small" style="margin:8px 0 4px">Последние состояния: ${m.events.length}. ${Object.entries(MACHINE_STATE).map(([, [c, w]]) => `<span class="dot" style="background:${c}"></span> ${w}`).join(" ")}</div>
     ${stateStrip(m.events.map((e) => e.state))}
     <div class="params">${charts || `<div class="empty">У станка нет параметров в справочнике.</div>`}</div>
-    ${faults.length ? `<h3>Сбои</h3><ul class="plain small">${faults.slice(-6).reverse().map((e) => `<li>${time(e.at, true)} · <b>${esc((MACHINE_STATE[e.state] || [0, e.state])[1])}</b>${e.message ? ` — ${esc(e.message)}` : ""}${Object.entries(e.parameters).filter(([k]) => m.parameters[k] && (e.parameters[k] < m.parameters[k].low || e.parameters[k] > m.parameters[k].high)).map(([k, v]) => ` · ${esc(m.parameters[k].title)} ${v} ${esc(m.parameters[k].unit)} при допуске ${m.parameters[k].low}–${m.parameters[k].high}`).join("")}</li>`).join("")}</ul>` : ""}`;
+    ${faults.length ? `<h3>Сбои</h3><ul class="plain small">${faults.slice(-6).reverse().map((e) => `<li>${time(e.at, true)}. <b>${esc((MACHINE_STATE[e.state] || [0, e.state])[1])}</b>${e.message ? `: ${esc(e.message)}` : ""}${Object.entries(e.parameters).filter(([k]) => m.parameters[k] && (e.parameters[k] < m.parameters[k].low || e.parameters[k] > m.parameters[k].high)).map(([k, v]) => `. ${esc(m.parameters[k].title)} ${v} ${esc(m.parameters[k].unit)} при допуске ${m.parameters[k].low}–${m.parameters[k].high}`).join("")}.</li>`).join("")}</ul>` : ""}`;
 }
 
-async function openBadge(nodeId, kind) {
-  const load = async () => {
-    const d = await api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery()}`);
-    const list = kind === "detected" ? d.detected.filter((n) => ["reported", "under_review", "recheck_requested"].includes(n.status)) : d.originated;
-    drawer(`<div class="card-head"><h2>${esc(d.stats.title)}</h2>${badge(kind === "detected" ? "обнаружено здесь" : "возникло здесь", kind === "detected" ? "bad" : "warn")}</div>
-      <p class="muted small">${kind === "detected" ? "Несоответствия, впервые обнаруженные на этом контроле и ждущие решения контролёра." : "Несоответствия, которые по разбору системы возникли на этом этапе: он единственный или один из возможных между последним чистым контролем и обнаружением."}</p>
-      ${list.length ? `<ul class="list">${list.map(ncRow).join("")}</ul>` : `<div class="empty">Нет.</div>`}
-      <p class="muted small">⟲ переносит линию в момент обнаружения: видно, что было на станках тогда.</p>`, { node: nodeId, refresh: load });
-  };
-  await load();
-}
-
+// Маршрут изделия в хронологии: каждое прохождение этапа — отдельный шаг. Проблемный
+// проход и повторный проход того же этапа не сливаются.
 async function openItem(itemId) {
   const load = async () => {
     const path = await api(withAt(`/api/items/${encodeURIComponent(itemId)}/path`));
-    const route = path.route.map((n, i) => `<div class="hop st-${n.status}"><div class="node-chip" data-node="${esc(n.node_id)}" title="${esc(L.pathStatus[n.status])}"><span class="muted">${String.fromCharCode(65 + i)}</span><b>${esc(n.title)}</b><span class="muted small">${esc(L.pathStatus[n.status])}</span></div><div class="arrow"></div></div>`).join("");
-    const steps = path.route.map((n, i) => {
-      const runs = n.runs.map((r) => `<div class="small">${r.rework ? badge("доработка", "info") + " " : ""}оператор <span class="mono">${esc(r.operator_id || "—")}</span> · ${time(r.started_at, true)} · ${mins(r.active_s)}${r.deviations ? " " + badge("отклонение станка", "bad") : ""}</div>`).join("");
-      const checks = n.checks.map((c) => `<div class="small">${badge(...(L.result[c.result] || [c.result]))} ${time(c.at, true)} · уверенность ${c.confidence ?? "—"}${c.reliable ? "" : " " + badge(c.note || "недостоверно", "warn")}</div>`).join("");
-      const ncs = n.nonconformances.map((x) => `<div class="small"><a href="#" data-nc="${esc(x.nc_id)}">${esc(x.defect_type)}</a> ${badge({ detected: "обнаружен здесь", origin: "возник здесь", possible_origin: "мог возникнуть здесь" }[x.role], x.role === "detected" ? "bad" : "warn")}</div>`).join("");
-      return `<div class="st-${n.status}"><b>${String.fromCharCode(65 + i)} · ${esc(n.title)}</b> <span class="muted small">${esc(n.equipment_id || "")}</span>${runs}${checks}${ncs}${!runs && !checks ? `<div class="muted small">${esc(L.pathStatus[n.status])}</div>` : ""}</div>`;
+    const chain = (path.visits || []).map((v) => `<div class="hop vt-${v.label}"><div class="node-chip" data-node="${esc(v.node_id)}" title="${esc(L.visit[v.label] || v.label)}"><b>${esc(v.title)}</b><span class="small">${esc(L.visit[v.label] || v.label)}</span>${v.at ? `<span class="muted small">${time(v.at, true)}</span>` : ""}</div><div class="arrow"></div></div>`).join("");
+    const steps = path.route.map((n) => {
+      const runs = n.runs.map((r) => `<div class="small">${r.rework ? badge("Доработка", "info") + " " : ""}Оператор <span class="mono">${esc(r.operator_id || "не указан")}</span>, ${time(r.started_at, true)}, ${mins(r.active_s)}</div>`).join("");
+      const checks = n.checks.map((c) => `<div class="small">${badge(...(L.result[c.result] || [c.result]))} ${time(c.at, true)}, уверенность ${c.confidence ?? "не указана"}${c.reliable ? "" : " " + badge(c.note || "Недостоверно", "warn")}</div>`).join("");
+      const ncs = n.nonconformances.map((x) => `<div class="small"><a href="#" data-nc="${esc(x.nc_id)}">${esc(x.defect_type)}</a> ${badge({ detected: "Обнаружен здесь", origin: "Возник здесь", possible_origin: "Мог возникнуть здесь" }[x.role], x.role === "detected" ? "bad" : "warn")}</div>`).join("");
+      return `<div class="st-${n.status}"><b>${esc(n.title)}</b> <span class="muted small">${esc(n.equipment_id || "")}</span>${runs}${checks}${ncs}${!runs && !checks ? `<div class="muted small">${esc(L.pathStatus[n.status])}</div>` : ""}</div>`;
     }).join("");
-    drawer(`<div class="card-head"><h2 class="mono">${esc(path.item_id)}</h2>${badge(...(L.status[path.status] || [path.status]))}</div>
-      <div class="muted small">${esc(path.item_type_id)}${path.parent_id ? ` · в составе <a href="#" data-item="${esc(path.parent_id)}">${esc(path.parent_id)}</a>` : ""}${path.components.length ? ` · компоненты ${path.components.map((c) => `<a href="#" data-item="${esc(c)}">${esc(c)}</a>`).join(", ")}` : ""}</div>
-      <div class="route">${route}</div>
-      <div class="legend"><span><i style="background:var(--ok)"></i>пройден</span><span><i style="background:var(--origin)"></i>возник</span><span><i style="background:var(--bad)"></i>обнаружен</span><span><i style="background:var(--warn)"></i>возможно / нет оценки</span></div>
+    details("item", `<div class="card-head"><h2 class="mono">${esc(path.item_id)}</h2>${badge(...(L.status[path.status] || [path.status]))}</div>
+      <div class="muted small">${esc(path.item_type_id)}${path.parent_id ? `. В составе <a href="#" data-item="${esc(path.parent_id)}">${esc(path.parent_id)}</a>` : ""}${path.components.length ? `. Компоненты: ${path.components.map((c) => `<a href="#" data-item="${esc(c)}">${esc(c)}</a>`).join(", ")}` : ""}</div>
+      <div class="route">${chain}</div>
+      <div class="legend">${["passed", "possible_origin", "origin", "defect", "not_assessable", "rework", "ok", "pending"].map((k) => `<span class="vt-key vt-${k}"><i></i>${L.visit[k]}</span>`).join("")}</div>
       <h3>По этапам</h3><div class="steps">${steps}</div>`, { item: itemId, refresh: load });
   };
   try { await load(); } catch (error) { notify(error.message, true); }
+}
+
+async function openProblem(problemId) {
+  if (problemId.startsWith("NA-")) return openUnassessable(problemId);
+  return openNc(problemId);
+}
+
+async function openUnassessable(problemId) {
+  const data = await api(withAt(`/api/lines/${S.lineId}/problems`));
+  const now = S.at ? await api(`/api/lines/${S.lineId}/problems`) : data;
+  const p = [...data.active, ...data.resolved, ...now.active, ...now.resolved].find((x) => x.problem_id === problemId);
+  if (!p) { notify("Проблема не найдена на выбранный момент.", true); return; }
+  const later = [...now.resolved].find((x) => x.problem_id === problemId);
+  details("problem", `<div class="card-head"><h2>Оценка невозможна</h2>${badge(later ? "Решено" : "Нужна повторная проверка", later ? "ok" : "warn")}</div>
+    <p class="small">Изделие <a href="#" data-item="${esc(p.item_id)}" class="mono">${esc(p.item_id)}</a>. ${esc(nodeTitle(p.node_id))}. Обнаружено ${time(p.at, true)}.</p>
+    <div class="layer source"><div class="layer-title">Причина</div><div class="small">${esc(p.note || "Анализатор сообщил, что оценка невозможна.")}</div></div>
+    <div class="layer system"><div class="layer-title">Оценка системы</div><div class="small">Изделие не признаётся ни годным, ни бракованным. Отсутствие признаков при плохом наблюдении не подтверждает годность, поэтому этап возникновения по этому наблюдению не ограничивается.</div></div>
+    <div class="layer human"><div class="layer-title">Решение</div><div class="small">${later ? `Повторная достоверная проверка выполнена ${time(later.resolved_at, true)}.` : "Требуется повторная проверка изделия."}</div></div>`, { problem: problemId });
 }
 
 async function openNc(ncId) {
   const card = await api(`/api/nonconformances/${encodeURIComponent(ncId)}`);
   const a = card.assessment || {};
   const causes = ["incoming_defect", "equipment_problem", "operator_error", "process_issue", "handling_damage", "other"];
-  drawer(`<div class="card-head"><h2>${esc(card.defect_type)}</h2>${badge(...(L.nc[card.status] || [card.status]))}</div>
-    <div class="muted small"><a href="#" data-item="${esc(card.item_id)}" class="mono">${esc(card.item_id)}</a> · ${esc(card.nc_id)} · зона ${esc(card.area)} · ${esc(card.severity)}</div>
-    <button class="btn small" style="margin-top:8px" data-rollback="${esc(card.nc_id)}" data-at="${esc(card.first_detected_at)}">⟲ линия в момент обнаружения</button>
-    <div class="layer source"><div class="layer-title">1 · сообщения анализатора, как пришли</div>
-      ${card.signals_detail.map((s) => `<div class="small">${badge(...(L.result[s.inspection_result] || [s.inspection_result]))} ${time(s.occurred_at, true)} · ${esc(s.checkpoint_id)} · уверенность ${s.confidence ?? "—"}${s.reliable ? "" : " " + badge(s.reliability_note || "недостоверно", "warn")}<details><summary class="muted small">исходное сообщение</summary><pre class="raw">${esc(JSON.stringify(s.raw, null, 2))}</pre></details></div>`).join("")}</div>
-    <div class="layer system"><div class="layer-title">2 · разбор — оценка системы, не решение</div>
+  details("problem", `<div class="card-head"><h2>${esc(card.defect_type)}</h2>${badge(...(L.nc[card.status] || [card.status]))}</div>
+    <div class="muted small"><a href="#" data-item="${esc(card.item_id)}" class="mono">${esc(card.item_id)}</a>, ${esc(card.nc_id)}, зона ${esc(card.area)}, ${esc(SEVERITY[card.severity] || card.severity)}. Обнаружено ${time(card.first_detected_at, true)}.</div>
+    <div class="detail-grid"><div>
+    <div class="layer source"><div class="layer-title">1. Сообщения анализатора в исходном виде</div>
+      ${card.signals_detail.map((s) => `<div class="small">${badge(...(L.result[s.inspection_result] || [s.inspection_result]))} ${time(s.occurred_at, true)}, ${esc(s.checkpoint_id)}, уверенность ${s.confidence ?? "не указана"}${s.reliable ? "" : " " + badge(s.reliability_note || "Недостоверно", "warn")}<details><summary class="muted small">Исходное сообщение</summary><pre class="raw">${esc(JSON.stringify(s.raw, null, 2))}</pre></details></div>`).join("")}</div>
+    <div class="layer system"><div class="layer-title">2. Разбор системы (оценка, не решение)</div>
       <div class="row"><b>${esc(L.stage[a.stage] || a.stage)}</b>${badge(...(L.conf[a.stage_confidence] || [a.stage_confidence]))}</div>
-      <h3>Основания</h3><ul class="plain small">${(a.evidence || []).map((e) => `<li>${esc(e.text)}</li>`).join("") || "<li>нет</li>"}</ul>
-      <h3>Что ещё могло привести к тому же</h3><ul class="plain small">${(a.alternatives || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>нет</li>"}</ul>
-      <h3>Каких сведений не хватает</h3><ul class="plain small">${(a.missing || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>не отмечено</li>"}</ul></div>
-    <div class="layer human"><div class="layer-title">3 · решения людей — отдельные записи журнала</div>
-      ${card.decisions.length ? `<ul class="plain small">${card.decisions.map((d) => `<li>${time(d.decided_at, true)} · <span class="mono">${esc(d.author_id)}</span> — ${esc(L.action[d.action] || d.action)}${d.cause_category ? `: ${esc(L.cause[d.cause_category])}` : ""}. <span class="muted">${esc(d.reason)}</span></li>`).join("")}</ul>` : `<div class="empty">Решений нет.</div>`}
-      ${S.at ? `<p class="muted small">Линия показана в прошлом. Решения принимаются только в текущем моменте — нажмите «к текущему».</p>` : card.allowed_actions.length ? `<form id="decision" class="form" style="margin-top:8px"><select name="action">${card.allowed_actions.map((x) => `<option value="${x}">${esc(L.action[x])}</option>`).join("")}</select><select name="cause" class="hidden">${causes.map((c) => `<option value="${c}">${esc(L.cause[c])}</option>`).join("")}</select><textarea name="reason" rows="2" placeholder="Обоснование — обязательно" required></textarea><button class="btn primary">Записать решение</button></form>` : `<p class="muted small">У роли «${esc(L.role[session.me.role])}» нет решений по этой карточке.</p>`}</div>`, { nc: ncId });
-  const form = $("decision");
-  if (form) {
+      <h3>Основания</h3><ul class="plain small">${(a.evidence || []).map((e) => `<li>${esc(e.text)}</li>`).join("") || "<li>Нет.</li>"}</ul>
+      <h3>Альтернативные причины</h3><ul class="plain small">${(a.alternatives || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>Нет.</li>"}</ul>
+      <h3>Недостающие сведения</h3><ul class="plain small">${(a.missing || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>Не отмечены.</li>"}</ul></div>
+    </div><div>
+    <div class="layer human"><div class="layer-title">3. Решения людей (отдельные записи журнала)</div>
+      ${card.decisions.length ? `<ul class="plain small">${card.decisions.map((d) => `<li>${time(d.decided_at, true)}, <span class="mono">${esc(d.author_id)}</span>: ${esc(L.action[d.action] || d.action)}${d.cause_category ? ` (${esc(L.cause[d.cause_category])})` : ""}. <span class="muted">${esc(d.reason)}</span></li>`).join("")}</ul>` : `<div class="empty">Решений нет.</div>`}
+      ${S.at && card.allowed_actions.length ? `<p class="muted small">Линия показана на ${time(S.at, true)}. Решение фиксируется текущим временем.</p>` : ""}${card.allowed_actions.length ? `<form id="decision" class="form" style="margin-top:8px"><select name="action">${card.allowed_actions.map((x) => `<option value="${x}">${esc(L.action[x])}</option>`).join("")}</select><select name="cause" class="hidden">${causes.map((c) => `<option value="${c}">${esc(L.cause[c])}</option>`).join("")}</select><textarea name="reason" rows="2" placeholder="Обоснование (обязательно)" required></textarea><button class="btn primary">Записать решение</button></form>` : `<p class="muted small">Роль «${esc(session.me.role_title)}» не принимает решений по этой карточке.</p>`}</div>
+    </div></div>`, { nc: ncId }, (body) => {
+    const form = body.querySelector("#decision");
+    if (!form) return;
     const sync = () => form.cause.classList.toggle("hidden", form.action.value !== "confirm_cause");
     form.action.addEventListener("change", sync);
     sync();
@@ -831,10 +1047,11 @@ async function openNc(ncId) {
         await api(`/api/nonconformances/${encodeURIComponent(ncId)}/decisions`, { method: "POST", body: JSON.stringify({ action: form.action.value, reason: form.reason.value, cause_category: form.action.value === "confirm_cause" ? form.cause.value : null }) });
         notify("Решение записано отдельной записью журнала.");
         openNc(ncId);
+        refreshQueue();
         refreshOverview();
       } catch (error) { notify(error.message, true); }
     });
-  }
+  });
 }
 
 async function openItems() {
@@ -843,13 +1060,13 @@ async function openItems() {
     const p = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
     if (S.at) p.set("at", S.at);
     const data = await api(`/api/lines/${S.lineId}/items?${p}&limit=150`);
-    const opt = (values, current, labels = {}) => `<option value="">все</option>` + values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
-    drawer(`<div class="card-head"><h2>Изделия линии</h2><span class="muted small">найдено ${data.total}${data.total > data.rows.length ? `, показано ${data.rows.length}` : ""}</span></div>
-      <div class="table-wrap"><table><tr><th>изделие</th><th>тип</th><th>статус</th><th>этап</th></tr>
-        <tr class="filters"><th><input data-f="q" value="${esc(f.q)}" placeholder="номер"></th><th><select data-f="item_type">${opt(data.facets.item_type, f.item_type)}</select></th>
+    const opt = (values, current, labels = {}) => `<option value="">Все</option>` + values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
+    details("items", `<div class="card-head"><h2>Изделия линии</h2><span class="muted small">Найдено: ${data.total}${data.total > data.rows.length ? `, показано: ${data.rows.length}` : ""}</span></div>
+      <div class="table-wrap"><table><tr><th>Изделие</th><th>Тип</th><th>Статус</th><th>Этап</th></tr>
+        <tr class="filters"><th><input data-f="q" value="${esc(f.q)}" placeholder="Номер"></th><th><select data-f="item_type">${opt(data.facets.item_type, f.item_type)}</select></th>
           <th><select data-f="status">${opt(data.facets.status, f.status, Object.fromEntries(Object.entries(L.status).map(([k, v]) => [k, v[0]])))}</select></th><th><select data-f="stage">${opt(data.facets.stage, f.stage, data.stage_titles)}</select></th></tr>
-        ${data.rows.map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td class="mono small">${esc(r.item_type_id)}</td><td>${badge(...(L.status[r.status] || [r.status]))}</td><td class="small">${esc(data.stage_titles[r.stage] || "—")}</td></tr>`).join("")}</table></div>`, { items: true, refresh: load });
-    $("drawer").querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => { S.itemFilters[el.dataset.f] = el.value; load(); }));
+        ${data.rows.map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td class="mono small">${esc(r.item_type_id)}</td><td>${badge(...(L.status[r.status] || [r.status]))}</td><td class="small">${esc(data.stage_titles[r.stage] || "—")}</td></tr>`).join("")}</table></div>`,
+    { items: true, refresh: load }, (body) => body.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => { S.itemFilters[el.dataset.f] = el.value; load(); })));
   };
   await load();
 }
@@ -857,133 +1074,237 @@ async function openItems() {
 async function openEconomics() {
   const e = await api(`/api/lines/${S.lineId}/economics`);
   const p = e.parameters, m = e.measured, c = e.computed;
-  const labels = { item_value_rub: "стоимость годного, ₽", rework_cost_rub: "стоимость доработки, ₽", scrap_cost_rub: "потери на браке, ₽", hour_cost_rub: "час участка, ₽", shift_hours: "смена, ч" };
+  const labels = { item_value_rub: "Стоимость годного изделия, ₽", rework_cost_rub: "Стоимость доработки, ₽", scrap_cost_rub: "Потери на браке, ₽", hour_cost_rub: "Стоимость часа участка, ₽", shift_hours: "Длительность смены, ч" };
   const losses = Object.entries(c.losses_by_node_rub);
   const max = Math.max(1, ...losses.map(([, v]) => v));
-  drawer(`<div class="card-head"><h2>Экономика линии</h2></div><p class="muted small">${esc(e.origin)}.</p>
-    <div class="kpis">${kpi(rub(c.output_value_rub), "выпуск годных")}${kpi(rub(c.rework_cost_rub + c.scrap_cost_rub), "потери от брака")}${kpi(pct(c.losses_share), "потери к выпуску")}${kpi(rub(c.cost_per_good_item_rub), "затраты на годное")}${kpi(c.capacity_per_shift ?? "—", "изделий за смену")}${kpi(pct(c.final_yield), "годных на ОТК")}</div>
-    <h3>Где теряем деньги</h3>${losses.length ? `<div class="bars">${losses.map(([node, v]) => `<div class="bar-row" data-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b class="small">${Math.round(v / 1000)}к</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}
-    <h3>Измерено</h3><dl class="kv"><dt>изделий-продуктов</dt><dd>${m.products}</dd><dt>годных</dt><dd>${m.finished_conforming}</dd><dt>доработок</dt><dd>${m.rework_runs}</dd><dt>часов на участках</dt><dd>${m.station_hours}</dd><dt>узкое место</dt><dd>${esc(nodeTitle(m.bottleneck_node))}</dd></dl>
-    <h3>Параметры</h3>${can("line_manage") ? `<form id="econ" class="form">${Object.entries(labels).map(([k, l]) => `<label>${l}<input name="${k}" type="number" step="any" min="0" value="${p[k]}"></label>`).join("")}<button class="btn primary">Сохранить</button></form>` : `<dl class="kv">${Object.entries(labels).map(([k, l]) => `<dt>${l}</dt><dd>${p[k]}</dd>`).join("")}</dl>`}<p class="muted small">${esc(p.note)}</p>`, { economics: true });
-  $("econ")?.addEventListener("submit", async (ev) => {
+  details("economics", `<div class="card-head"><h2>Экономика линии</h2></div><p class="muted small">${esc(e.origin)}.</p>
+    <div class="detail-grid"><div><div class="kpis three">${kpi(rub(c.output_value_rub), "Выпуск годных")}${kpi(rub(c.rework_cost_rub + c.scrap_cost_rub), "Потери от брака")}${kpi(pct(c.losses_share), "Потери к выпуску")}${kpi(rub(c.cost_per_good_item_rub), "Затраты на годное")}${kpi(c.capacity_per_shift ?? "—", "Изделий за смену")}${kpi(pct(c.final_yield), "Годных на ОТК")}</div>
+    <h3>Потери по этапам</h3>${losses.length ? `<div class="bars">${losses.map(([node, v]) => `<div class="bar-row" data-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b class="small">${Math.round(v / 1000)} тыс</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}</div>
+    <div><h3>Измерено</h3><dl class="kv"><dt>Изделий-продуктов</dt><dd>${m.products}</dd><dt>Годных</dt><dd>${m.finished_conforming}</dd><dt>Доработок</dt><dd>${m.rework_runs}</dd><dt>Часов на участках</dt><dd>${m.station_hours}</dd><dt>Узкое место</dt><dd>${esc(nodeTitle(m.bottleneck_node))}</dd></dl>
+    <h3>Параметры</h3>${can("line_manage") ? `<form id="econ" class="form">${Object.entries(labels).map(([k, l]) => `<label>${l}<input name="${k}" type="number" step="any" min="0" value="${p[k]}"></label>`).join("")}<button class="btn primary">Сохранить</button></form>` : `<dl class="kv">${Object.entries(labels).map(([k, l]) => `<dt>${l}</dt><dd>${p[k]}</dd>`).join("")}</dl>`}<p class="muted small">${esc(p.note)}</p></div></div>`,
+  { economics: true }, (body) => body.querySelector("#econ")?.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     try { await api(`/api/lines/${S.lineId}/economics`, { method: "PUT", body: JSON.stringify(Object.fromEntries(new FormData(ev.target).entries())) }); notify("Параметры сохранены."); openEconomics(); } catch (error) { notify(error.message, true); }
-  });
+  }));
 }
 
 // --- инструкция: как в cosmo-net — кнопка рядом с названием, окно поверх экрана, Esc закрывает ---------------------
 
 function openGuide() {
   const role = S.viewRole || session.me?.role || "controller";
-  modal(`<div class="modal-head"><h2>Как пользоваться системой</h2><button class="btn small" data-close aria-label="Закрыть инструкцию">✕</button></div>
+  modal(`<div class="modal-head"><h2>Руководство пользователя</h2><button class="btn small" data-close aria-label="Закрыть руководство">✕</button></div>
     <div class="guide-body">
-      <section><h3>Для роли «${esc(L.role[role])}»</h3><ol>${GUIDE[role].map((g) => `<li>${esc(g)}</li>`).join("")}</ol></section>
-      <section><h3>Производство</h3><p>Первый экран — все линии завода. У каждой — схема, число изделий, операций в работе и несоответствий, ждущих решения; красная рамка — есть что решать. Сверху выбирается изделие: останутся линии, которые его выпускают. Нажмите линию, чтобы перейти к ней.</p></section>
-      <section><h3>Линия</h3><p>Всё остальное — на экране линии. В центре граф: этапы процесса и связи между ними. Колёсико мыши приближает, перетаскивание фона двигает, кнопка <b>⤢</b> вписывает граф целиком.</p>
-        <ul><li>Под каждым станком — кружки с числами: сколько изделий у него сейчас <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> годны, <span class="dot" style="background:var(--bad)"></span> с несоответствием, <span class="dot" style="background:var(--warn)"></span> без оценки.</li>
-        <li>Когда изделие переходит к следующему этапу, по стрелке пролетает шарик его цвета.</li>
-        <li><b class="bad-text">Красная метка</b> на станке — несоответствия, обнаруженные здесь и ждущие решения; <b class="origin-text">оранжевая</b> — возникшие здесь по разбору системы. Нажмите метку — справа появится их список.</li>
-        <li>Нажмите сам станок — справа его статистика, операторы и изделия, прошедшие через него.</li></ul></section>
-      <section><h3>Шкала времени</h3><p>Внизу — шкала от первого события линии до сейчас. Отметки: <span class="dot" style="background:var(--bad)"></span> обнаружение, <span class="dot" style="background:var(--ok)"></span> решение, <span class="dot" style="background:var(--warn)"></span> отклонение станка. Перетащите ползунок — граф, очередь и детали покажут состояние на этот момент. <b>▶ Воспроизвести</b> прокручивает историю, <b>Сейчас</b> возвращает к текущему.</p>
-        <p class="note">В прошлом решения не принимаются: карточку можно прочитать, решение — только в текущем моменте.</p></section>
-      <section><h3>Очередь и откат к моменту отказа</h3><p>У контролёра слева — очередь несоответствий. <b>⟲ к моменту отказа</b> переносит всю линию в момент обнаружения и открывает карточку: видно, какие изделия где стояли и что показывали станки тогда.</p></section>
-      <section><h3>Карточка несоответствия</h3><p>Три слоя, и они не смешиваются: исходные сообщения анализатора как пришли; разбор системы — этап, основания, альтернативы и недостающие сведения; решения людей отдельными записями журнала с автором и обоснованием.</p></section>
-      <section><h3>Этапы процесса и изделия</h3><p><b>Этапы процесса</b> в шапке раскрывает сверху таблицу по всем этапам с фильтрами по изделию, смене и периоду; экран линии при этом сдвигается вниз, а не перекрывается. Любая выплывающая панель закрывается той же кнопкой, крестиком или нажатием вне её. <b>Изделия</b> — таблица с фильтрами по столбцам; изделие открывается маршрутом A → B → C.</p></section>
-      <section><h3>Новая линия и станки</h3><p><b>Новая линия</b> открывает блочный редактор: перетащите блоки «Контроль» и «Операция» на холст, соедините их от правого кружка к левому, задайте параметры справа. Два входа в одну операцию — сборка.</p>
-        <ul><li>Операцию ставят на станок из справочника оборудования. Вместе со станком подтягиваются обработка, которую выполняет его тип, и виды дефектов, которые на нём возникают; лишние можно снять.</li>
-        <li>Виды дефектов у контроля выбираются из справочника с поиском — ничего не нужно вбивать руками.</li>
-        <li>Новый станок со всеми характеристиками — тип, дефекты, допуски параметров — заводит администратор: ☰ → «Оборудование и станки».</li>
-        <li>Экономика линии задаётся в одном месте — кнопкой «Экономика» в шапке линии.</li></ul></section>
-      <section><h3>Оценка показателей и сбои станка</h3><p>Показатели этапа окрашены по четырём уровням: <span class="gcell g-good">хорошо</span> <span class="gcell g-fair">терпимо</span> <span class="gcell g-bad">плохо</span> <span class="gcell g-critical">очень плохо</span>. Наведите на плитку — появится порог. Пороги условные, на предприятии их задают технолог и ОТК.</p>
-        <p>У операции справа — станок: полоса последних состояний (красное — режим вне допуска) и график каждого параметра режима с зелёной полосой допуска. У технолога слева — сбои всех станков линии.</p></section>
-      <section><h3>Пульт эмулятора</h3><p>Эмуляция вынесена за пределы системы — в отдельный пульт (кнопка в шапке). Там линию запускают и останавливают, вносят дефект в выбранный этап и проигрывают прогон по данным контракта: сколько изделий, за сколько секунд, какие дефекты куда. Система видит эмулятор как обычные источники событий.</p></section>
-      <section><h3>Коротко о частом</h3><dl><dt>Почему изделие «на рассмотрении», а не «брак»?</dt><dd>Сигнал анализатора — ещё не несоответствие: его подтверждает контролёр.</dd><dt>Почему система не называет виновного?</dt><dd>Оператор — участник операции. Ошибка оператора бывает только подтверждённой человеком.</dd></dl></section>
+      <section><h3>Роль «${esc(L.role[role])}»</h3><ol>${GUIDE[role].map((g) => `<li>${esc(g)}</li>`).join("")}</ol></section>
+      <section><h3>Обзор производства</h3><p>Первый экран содержит все линии предприятия. Для каждой линии указаны схема, число изделий, операций в работе и проблем, ожидающих решения. Красная рамка обозначает линию с проблемами. Фильтр изделий сверху оставляет линии, выпускающие выбранное изделие.</p></section>
+      <section><h3>Экран линии</h3><p>В центре расположен граф линии: этапы процесса и связи между ними. Колесо мыши изменяет масштаб, перетаскивание фона сдвигает граф, кнопка <b>⤢</b> вписывает граф целиком.</p>
+        <ul><li>Под каждым этапом в кругах указано число прошедших изделий по статусам: <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> годно, <span class="dot" style="background:var(--bad)"></span> несоответствие, <span class="dot" style="background:var(--amber)"></span> оценка невозможна. Полное значение показывается в подсказке.</li>
+        <li>Над этапом указано число проблем на выбранный момент: <span class="dot" style="background:var(--bad)"></span> несоответствия, <span class="dot" style="background:var(--amber)"></span> оценка невозможна. Проблемы, решённые позднее, при просмотре прошлого показываются серым.</li>
+        <li>Выбранная проблема выделяется кольцом вокруг этапа и подписью над графом при любом положении шкалы времени.</li></ul></section>
+      <section><h3>Шкала времени</h3><p>Шкала задаёт промежуток двумя ползунками. Граф показывает состояние линии на конец промежутка, таблица этапов считает показатели внутри промежутка. Длина промежутка выбирается кнопками «Сутки», «Смена», «Всё время»; значение по умолчанию задаётся в конфигурации.</p>
+        <p>Отметки на шкале связаны только с проблемами: красная означает обнаружение несоответствия, янтарная означает, что оценка невозможна, зелёная означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. Решения принимаются только для текущего момента.</p></section>
+      <section><h3>Подробности под линией</h3><p>Вкладки «Проблема», «Изделие», «Этап», «Изделия линии» и «Экономика» заполняются при выборе события. Карточка несоответствия содержит три раздела: исходные сообщения анализатора, разбор системы и решения людей.</p></section>
+      <section><h3>Этапы процесса</h3><p>Кнопка «Этапы процесса» раскрывает таблицу над графом. В каждой ячейке указано значение за выбранный промежуток и значение на текущий момент. Выбор этапа в таблице и на графе синхронизирован.</p></section>
+      <section><h3>Новая линия и оборудование</h3><p>Администратор описывает типы станков и виды дефектов. Технолог регистрирует по типу конкретный станок. Руководитель в блочном редакторе назначает операцию на станок из справочника; обработка и виды дефектов определяются типом станка.</p></section>
+      <section><h3>Пульт эмулятора</h3><p>Пульт эмулятора открывается в том же окне кнопкой в шапке. В пульте запускается и останавливается эмуляция линии, вносится дефект в выбранный этап и проигрывается прогон по данным контракта. Система принимает события эмулятора как события обычных источников.</p></section>
+      <section><h3>Часто задаваемые вопросы</h3><dl><dt>Почему изделие «на рассмотрении», а не «брак»?</dt><dd>Сигнал анализатора становится несоответствием только после подтверждения контролёром.</dd><dt>Почему «оценка невозможна» не считается браком?</dt><dd>Отсутствие признаков при плохом наблюдении не подтверждает ни годность, ни брак. Требуется повторная проверка.</dd><dt>Почему система не называет виновного?</dt><dd>Оператор является участником операции. Ошибка оператора фиксируется только решением человека.</dd></dl></section>
     </div>`);
 }
 
 // --- администрирование ---------------------------------------------------------------------------------------------------
 
-const ADMIN_SECTIONS = [["equipment", "Оборудование и станки"], ["defects", "Справочник дефектов"], ["db", "База данных"], ["roles", "Роли и права"], ["integrity", "Целостность журнала"], ["keys", "Ключи"], ["audit", "Журнал действий"], ["integration", "Интеграции"]];
+// У администратора это главный экран. Администратор описывает шаблоны (типы станков и виды
+// дефектов), заводит роли и пользователей и следит за журналом. Конкретный станок по
+// шаблону заводит технолог: у него раздел «Оборудование» открывается окном.
+const ADMIN_SECTIONS = [["machine_types", "Типы станков"], ["defects", "Виды дефектов"], ["equipment", "Оборудование"], ["roles", "Роли"], ["users", "Пользователи"], ["db", "База данных"], ["integrity", "Целостность журнала"], ["keys", "Ключи"], ["audit", "Журнал действий"], ["integration", "Интеграции"]];
+const STATUS_EQ = { active: ["В работе", "ok"], maintenance: ["На обслуживании", "warn"], retired: ["Списан", "plain"] };
 
-function openAdmin(section) {
-  const { dialog, close } = modal(`<div class="modal-head"><h2>Администрирование</h2><button class="btn small" data-close>✕</button></div>
-    <div class="admin"><nav class="admin-nav">${ADMIN_SECTIONS.map(([k, t]) => `<button class="btn ${k === section ? "active" : ""}" data-sec="${k}">${t}</button>`).join("")}</nav><div id="admin-body" class="admin-body">загрузка…</div></div>`, { wide: true });
-  const show = async (key) => {
-    dialog.querySelectorAll("[data-sec]").forEach((b) => b.classList.toggle("active", b.dataset.sec === key));
-    const body = dialog.querySelector("#admin-body");
-    try { body.innerHTML = await ADMIN[key](); await ADMIN_BIND[key]?.(body, close); } catch (error) { body.innerHTML = `<p class="bad-text">${esc(error.message)}</p>`; }
-  };
-  dialog.querySelectorAll("[data-sec]").forEach((b) => b.addEventListener("click", () => show(b.dataset.sec)));
-  show(section);
+function showAdmin(section = S.adminSection || "machine_types") {
+  S.view = "admin";
+  S.adminSection = section;
+  store.set("zd-view", "admin");
+  stopPollers();
+  stopPlaying();
+  closeStages();
+  $("plant-view").classList.add("hidden");
+  $("line-view").classList.add("hidden");
+  $("admin-view").classList.remove("hidden");
+  renderTop();
+  $("admin-view").innerHTML = `<div class="admin-page-head"><h1>Администрирование</h1><p class="muted">Шаблоны оборудования и дефектов, роли, пользователи и служебные функции системы.</p></div>
+    <div class="admin card"><nav class="admin-nav">${ADMIN_SECTIONS.map(([k, t]) => `<button class="btn ${k === section ? "active" : ""}" data-sec="${k}">${t}</button>`).join("")}</nav><div id="admin-body" class="admin-body">Загрузка.</div></div>`;
+  $("admin-view").querySelectorAll("[data-sec]").forEach((b) => b.addEventListener("click", () => showAdmin(b.dataset.sec)));
+  renderAdminSection($("admin-body"), section);
 }
 
+async function renderAdminSection(body, key) {
+  try { body.innerHTML = await ADMIN[key](); await ADMIN_BIND[key]?.(body); } catch (error) { body.innerHTML = `<p class="bad-text">${esc(error.message)}</p>`; }
+}
+
+// Раздел оборудования для технолога: тот же справочник станков, открытый окном.
+function openEquipment() {
+  const { dialog } = modal(`<div class="modal-head"><h2>Оборудование</h2><button class="btn small" data-close>✕</button></div><div class="admin-body" id="equipment-body">Загрузка.</div>`, { wide: true });
+  renderAdminSection(dialog.querySelector("#equipment-body"), "equipment");
+}
+
+const defectOptions = (catalog) => catalog.defects.map((d) => ({ value: d.code, label: d.title, hint: d.code }));
+const csv = (text) => text.split(",").map((x) => x.trim()).filter(Boolean);
+
 const ADMIN = {
-  async equipment() {
-    const rows = await api("/api/admin/equipment");
-    const st = { active: ["в работе", "ok"], maintenance: ["на обслуживании", "warn"], retired: ["списан", "plain"] };
-    return `<div class="card-head"><h3>Справочник оборудования</h3><button class="btn primary small" id="new-machine">＋ Новый станок</button></div>
-      <p class="muted small">Станок заводится здесь со всеми характеристиками: тип определяет обработку, виды дефектов и параметры режима; допуски параметров задаются у каждого станка. Руководитель в редакторе линии выбирает станок только из этого справочника. Каждое изменение пишется в журнал критических действий.</p>
-      <div id="machine-form"></div>
-      <div class="table-wrap"><table><tr><th>станок</th><th>тип · обработка</th><th>дефекты</th><th>допуски</th><th>где стоит</th><th>состояние</th><th class="num">сбоев</th><th></th></tr>${rows.map((r) => `<tr>
-        <td><b class="mono">${esc(r.equipment_id)}</b><div class="small">${esc(r.title)}</div><div class="muted small">инв. № ${esc(r.inventory_no || "—")}</div></td>
-        <td class="small">${esc(r.type_title)}<div class="muted">${esc(r.processing.join(", "))}</div></td>
-        <td class="small mono">${esc(r.defect_types.join(", "))}</td>
-        <td class="small">${Object.values(r.parameters).map((p) => `${esc(p.title)} ${p.low}–${p.high} ${esc(p.unit)}`).join("<br>")}</td>
-        <td class="small">${esc(r.used_in.join("; ") || "—")}</td>
-        <td>${badge(...st[r.status])}${r.state ? `<div class="muted small">${esc(r.state)}</div>` : ""}</td><td class="num">${r.deviations}</td>
-        <td><button class="btn small" data-machine="${esc(r.equipment_id)}">изменить</button></td></tr>`).join("")}</table></div>`;
+  async machine_types() {
+    const rows = await api("/api/admin/machine-types");
+    return `<div class="card-head"><h3>Типы станков</h3><button class="btn primary small" id="new-type">＋ Новый тип</button></div>
+      <p class="muted small">Тип станка задаёт шаблон: выполняемую обработку, виды дефектов и параметры режима, которые станок передаёт в журнал станка, с допусками по умолчанию. Конкретный станок по шаблону регистрирует технолог.</p>
+      <div id="type-form"></div>
+      <div class="table-wrap"><table><tr><th>Тип</th><th>Обработка</th><th>Виды дефектов</th><th>Параметры режима</th><th class="num">Станков</th><th></th></tr>${rows.map((r) => `<tr>
+        <td><b>${esc(r.title)}</b><div class="muted small mono">${esc(r.key)}</div></td><td class="small">${esc(r.processing.join(", "))}</td><td class="small mono">${esc(r.defect_types.join(", "))}</td>
+        <td class="small">${Object.entries(r.parameters).map(([k, p]) => `${esc(p.title)}, ${esc(p.unit)}: ${p.low}–${p.high} <span class="muted mono">${esc(k)}</span>`).join("<br>")}</td><td class="num">${r.machines}</td>
+        <td><button class="btn small" data-type="${esc(r.key)}">Изменить</button></td></tr>`).join("")}</table></div>`;
   },
   async defects() {
     const rows = await api("/api/admin/defects");
-    return `<h3>Справочник дефектов</h3><p class="muted small">Коды приходят от анализаторов и задаются этапам линий. Для каждого — чем он обнаруживается и где граница визуального метода.</p><table><tr><th>код</th><th>название</th><th>чем обнаруживается</th><th>где возникает по настройке линий</th><th class="num">найдено</th><th class="num">подтв.</th></tr>${rows.map((r) => `<tr><td class="mono">${esc(r.code)}</td><td>${esc(r.title)}</td><td class="small muted">${esc(r.method)}</td><td class="small">${esc(r.where.join("; ") || "—")}</td><td class="num">${r.found}</td><td class="num">${r.confirmed}</td></tr>`).join("")}</table>`;
+    return `<div class="card-head"><h3>Виды дефектов</h3><button class="btn primary small" id="new-defect">＋ Новый вид</button></div>
+      <p class="muted small">Код дефекта передаётся анализатором и назначается этапам линий. Для каждого вида указан метод оценки и граница визуального метода.</p>
+      <div id="defect-form"></div>
+      <div class="table-wrap"><table><tr><th>Код</th><th>Название</th><th>Метод оценки</th><th>Этапы линий</th><th class="num">Найдено</th><th class="num">Подтверждено</th><th></th></tr>${rows.map((r) => `<tr><td class="mono">${esc(r.code)}</td><td>${esc(r.title)}</td><td class="small muted">${esc(r.method)}</td><td class="small">${esc(r.where.join("; ") || "—")}</td><td class="num">${r.found}</td><td class="num">${r.confirmed}</td><td><button class="btn small" data-defect="${esc(r.code)}">Изменить</button></td></tr>`).join("")}</table></div>`;
   },
-  async db() {
-    const d = await api("/api/admin/db");
-    return `<h3>База данных · ${esc(d.dialect)}</h3><p class="muted small">Только чтение. Шифротекст журнала, хеши паролей и полезная нагрузка очереди не показываются никогда.</p>
-      <table><tr><th>таблица</th><th class="num">строк</th><th>столбцы</th><th>скрыто</th><th></th></tr>${d.tables.map((t) => `<tr><td class="mono">${esc(t.table)}</td><td class="num">${t.rows}</td><td class="small mono">${esc(t.columns.join(", "))}</td><td class="small muted">${esc(t.hidden.join(", ") || "—")}</td><td><button class="btn small" data-table="${esc(t.table)}">строки</button></td></tr>`).join("")}</table><div id="db-rows"></div>`;
+  async equipment() {
+    const rows = await api(can("admin") ? "/api/admin/equipment" : "/api/equipment");
+    return `<div class="card-head"><h3>Оборудование</h3>${can("equipment_manage") ? `<button class="btn primary small" id="new-machine">＋ Новый станок</button>` : ""}</div>
+      <p class="muted small">Станок регистрируется по типу из справочника. Обработка, параметры режима и виды дефектов определяются типом; у конкретного станка задаются код, инвентарный номер, состояние, перечень дефектов и допуски. Каждое изменение записывается в журнал критических действий.</p>
+      <div id="machine-form"></div>
+      <div class="table-wrap"><table><tr><th>Станок</th><th>Тип и обработка</th><th>Виды дефектов</th><th>Допуски</th><th>Установлен</th><th>Состояние</th><th class="num">Сбоев</th><th></th></tr>${rows.map((r) => `<tr>
+        <td><b class="mono">${esc(r.equipment_id)}</b><div class="small">${esc(r.title)}</div><div class="muted small">Инв. № ${esc(r.inventory_no || "не указан")}</div></td>
+        <td class="small">${esc(r.type_title)}<div class="muted">${esc(r.processing.join(", "))}</div></td>
+        <td class="small mono">${esc(r.defect_types.join(", "))}</td>
+        <td class="small">${Object.values(r.parameters).map((p) => `${esc(p.title)}: ${p.low}–${p.high} ${esc(p.unit)}`).join("<br>")}</td>
+        <td class="small">${esc(r.used_in.join("; ") || "Не установлен")}</td>
+        <td>${badge(...STATUS_EQ[r.status])}${r.state ? `<div class="muted small">${esc(MACHINE_STATE[r.state]?.[1] || r.state)}</div>` : ""}</td><td class="num">${r.deviations}</td>
+        <td>${can("equipment_manage") ? `<button class="btn small" data-machine="${esc(r.equipment_id)}">Изменить</button>` : ""}</td></tr>`).join("")}</table></div>`;
   },
   async roles() {
     const d = await api("/api/admin/roles");
-    const roles = Object.keys(d.roles);
-    return `<h3>Что могут делать пользователи</h3><table><tr><th>право</th>${roles.map((r) => `<th>${esc(L.role[r] || r)}</th>`).join("")}</tr>${d.permissions.map((p) => `<tr><td>${esc(p.title)}</td>${roles.map((r) => `<td class="num">${d.roles[r].includes(p.permission) ? "✓" : ""}</td>`).join("")}</tr>`).join("")}</table>
-      <h3>Пользователи</h3><table><tr><th>пользователь</th><th>роль</th><th>пароль</th></tr>${d.users.map((u) => `<tr><td>${esc(u.name)} <span class="mono muted small">${esc(u.user_id)}</span></td><td>${esc(L.role[u.role])}</td><td>${u.has_password ? badge("задан", "ok") : badge("только демо-вход", "plain")}</td></tr>`).join("")}</table>
-      <p class="muted small">Пароль задаётся командой <span class="mono">uv run python scripts/keys.py password &lt;пользователь&gt;</span>; в базе хранится только хеш scrypt.</p>`;
+    S.adminRoles = d;
+    const roles = Object.entries(d.roles);
+    return `<div class="card-head"><h3>Роли</h3><button class="btn primary small" id="new-role">＋ Новая роль</button></div>
+      <p class="muted small">Роль определяет права и экран, который видит пользователь. Новая роль выбирает один из готовых экранов и набор прав.</p>
+      <div id="role-form"></div>
+      <div class="table-wrap"><table><tr><th>Право</th>${roles.map(([code, r]) => `<th class="num">${esc(r.title)}<div><button class="btn small" data-role="${esc(code)}">Изменить</button></div></th>`).join("")}</tr>${d.permissions.map((p) => `<tr><td>${esc(p.title)}</td>${roles.map(([, r]) => `<td class="num">${r.permissions.includes(p.permission) ? "✓" : ""}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  },
+  async users() {
+    const d = await api("/api/admin/roles");
+    S.adminRoles = d;
+    return `<div class="card-head"><h3>Пользователи</h3><button class="btn primary small" id="new-user">＋ Новый пользователь</button></div>
+      <p class="muted small">Логин не меняется после создания. Пароль хранится только в виде хеша scrypt.</p>
+      <div id="user-form"></div>
+      <table><tr><th>Логин</th><th>Имя</th><th>Роль</th><th>Пароль</th><th>Состояние</th><th></th></tr>${d.users.map((u) => `<tr><td class="mono">${esc(u.user_id)}</td><td>${esc(u.name)}</td><td>${esc(d.roles[u.role]?.title || u.role)}</td><td>${u.has_password ? badge("Задан", "ok") : badge("Не задан", "plain")}</td><td>${u.active ? badge("Активен", "ok") : badge("Отключён", "plain")}</td><td><button class="btn small" data-user-edit="${esc(u.user_id)}">Изменить</button></td></tr>`).join("")}</table>`;
+  },
+  async db() {
+    const d = await api("/api/admin/db");
+    return `<h3>База данных: ${esc(d.dialect)}</h3><p class="muted small">Только чтение. Шифротекст журнала, хеши паролей и полезная нагрузка очереди не показываются.</p>
+      <table><tr><th>Таблица</th><th class="num">Строк</th><th>Столбцы</th><th>Скрыто</th><th></th></tr>${d.tables.map((t) => `<tr><td class="mono">${esc(t.table)}</td><td class="num">${t.rows}</td><td class="small mono">${esc(t.columns.join(", "))}</td><td class="small muted">${esc(t.hidden.join(", ") || "—")}</td><td><button class="btn small" data-table="${esc(t.table)}">Строки</button></td></tr>`).join("")}</table><div id="db-rows"></div>`;
   },
   async integrity() {
     return `<h3>Целостность журнала</h3><p class="muted">Проверяются цепочка хешей, подписи пакетов и подписанная голова журнала, хранящаяся отдельно от базы.</p><button class="btn primary" id="verify">Проверить</button><div id="verify-out" style="margin-top:10px"></div>`;
   },
   async keys() {
     const k = await api("/api/keys");
-    return `<h3>Ключи и профили</h3><table><tr><th>ключ</th><th>профиль</th><th>статус</th><th>секрет</th></tr>${k.keys.map((x) => `<tr><td class="mono">${esc(x.key_id)}</td><td class="mono">${esc(x.profile_id)}</td><td>${badge(x.status, x.status === "active" ? "ok" : "plain")}</td><td>${x.secret_available ? "есть" : badge("недоступен", "warn")}</td></tr>`).join("")}</table>
-      <div class="row" style="margin-top:10px"><select id="profile">${Object.entries(k.profiles).map(([id, m]) => `<option value="${id}">${esc(id)} — ${esc(m)}</option>`).join("")}</select><button class="btn" id="rotate">Выпустить ключ</button></div>`;
+    return `<h3>Ключи и профили</h3><table><tr><th>Ключ</th><th>Профиль</th><th>Статус</th><th>Секрет</th></tr>${k.keys.map((x) => `<tr><td class="mono">${esc(x.key_id)}</td><td class="mono">${esc(x.profile_id)}</td><td>${badge(x.status, x.status === "active" ? "ok" : "plain")}</td><td>${x.secret_available ? "Доступен" : badge("Недоступен", "warn")}</td></tr>`).join("")}</table>
+      <div class="row" style="margin-top:10px"><select id="profile">${Object.entries(k.profiles).map(([id, m]) => `<option value="${id}">${esc(id)}: ${esc(m)}</option>`).join("")}</select><button class="btn" id="rotate">Выпустить ключ</button></div>`;
   },
   async audit() {
     const rows = await api("/api/audit");
-    return `<h3>Журнал критических действий</h3><table><tr><th>№</th><th>когда</th><th>кто</th><th>действие</th></tr>${rows.slice(0, 100).map((r) => `<tr><td>${r.seq}</td><td class="small">${time(r.at, true)}</td><td class="mono small">${esc(r.user_id)}</td><td>${esc(r.action)} <span class="muted mono small">${esc(JSON.stringify(r.details))}</span></td></tr>`).join("")}</table>`;
+    return `<h3>Журнал критических действий</h3><table><tr><th>№</th><th>Время</th><th>Пользователь</th><th>Действие</th></tr>${rows.slice(0, 100).map((r) => `<tr><td>${r.seq}</td><td class="small">${time(r.at, true)}</td><td class="mono small">${esc(r.user_id)}</td><td>${esc(r.action)} <span class="muted mono small">${esc(JSON.stringify(r.details))}</span></td></tr>`).join("")}</table>`;
   },
   async integration() {
     const d = await api("/api/integration");
-    return `<div class="card-head"><h3>Интеграции</h3><button class="btn small primary" id="sync">Синхронизировать</button></div><p>Подключено: ${d.adapters.map((a) => badge(a, "info")).join(" ") || "—"}</p>
+    return `<div class="card-head"><h3>Интеграции</h3><button class="btn small primary" id="sync">Синхронизировать</button></div><p>Подключено: ${d.adapters.map((a) => badge(a, "info")).join(" ") || "нет"}</p>
       ${d.outbox.length ? `<table>${d.outbox.map((o) => `<tr><td class="mono">${esc(o.item_id)}</td><td>${badge(o.status, o.status === "delivered" ? "ok" : "warn")}</td><td>${o.attempts}</td><td class="muted small">${esc(o.last_error || o.external_ref || "")}</td></tr>`).join("")}</table>` : `<div class="empty">Очередь пуста.</div>`}`;
   },
 };
 
 const ADMIN_BIND = {
+  async machine_types(body) {
+    const [catalog, rows] = await Promise.all([api("/api/catalog"), api("/api/admin/machine-types")]);
+    const form = body.querySelector("#type-form");
+    const open = (t = null) => {
+      const editing = !!t;
+      const v = t || { key: "", title: "", processing: [], defect_types: [], parameters: {} };
+      let defects = [...v.defect_types];
+      let params = Object.entries(v.parameters).map(([k, p]) => ({ key: k, ...p }));
+      form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Тип ${esc(v.title)}` : "Новый тип станка"}</h3>
+        <div class="form-row"><label>Код типа<input name="key" value="${esc(v.key)}" ${editing ? "readonly" : ""} required pattern="[a-z][a-z0-9_]{1,47}" placeholder="plasma_spray"></label>
+          <label>Название<input name="title" value="${esc(v.title)}" required placeholder="Установка плазменного напыления"></label>
+          <label>Обработка (через запятую)<input name="processing" value="${esc(v.processing.join(", "))}" required placeholder="напыление"></label></div>
+        <div class="field"><span>Виды дефектов, которые возникают на станках этого типа</span><div data-picker></div></div>
+        <h3>Параметры режима, которые передаёт станок</h3><div data-params></div>
+        <div class="row"><button type="button" class="btn small" data-add-param>＋ Параметр</button></div>
+        <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Добавить тип"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
+      const f = form.querySelector("form");
+      picker(f.querySelector("[data-picker]"), { options: defectOptions(catalog), selected: defects, onChange: (x) => { defects = x; } });
+      const drawParams = () => {
+        f.querySelector("[data-params]").innerHTML = `<table><tr><th>Код</th><th>Название</th><th>Ед.</th><th class="num">Нижняя граница</th><th class="num">Верхняя граница</th><th></th></tr>${params.map((p, i) => `<tr><td><input data-p="key" data-i="${i}" value="${esc(p.key)}" style="width:140px"></td><td><input data-p="title" data-i="${i}" value="${esc(p.title)}"></td><td><input data-p="unit" data-i="${i}" value="${esc(p.unit)}" style="width:70px"></td><td class="num"><input data-p="low" data-i="${i}" type="number" step="any" value="${p.low}" style="width:90px"></td><td class="num"><input data-p="high" data-i="${i}" type="number" step="any" value="${p.high}" style="width:90px"></td><td><button type="button" class="btn small" data-del="${i}">×</button></td></tr>`).join("")}</table>`;
+        f.querySelectorAll("[data-p]").forEach((el) => el.addEventListener("input", () => { params[Number(el.dataset.i)][el.dataset.p] = el.value; }));
+        f.querySelectorAll("[data-del]").forEach((el) => el.addEventListener("click", () => { params.splice(Number(el.dataset.del), 1); drawParams(); }));
+      };
+      drawParams();
+      f.querySelector("[data-add-param]").addEventListener("click", () => { params.push({ key: "", title: "", unit: "", low: 0, high: 1 }); drawParams(); });
+      f.querySelector("[data-cancel]").addEventListener("click", () => { form.innerHTML = ""; });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const spec = { key: f.key.value, title: f.title.value, processing: csv(f.processing.value), defect_types: defects, parameters: Object.fromEntries(params.filter((p) => p.key).map((p) => [p.key, { title: p.title, unit: p.unit, low: Number(p.low), high: Number(p.high) }])) };
+        try {
+          await api(editing ? `/api/admin/machine-types/${encodeURIComponent(spec.key)}` : "/api/admin/machine-types", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(editing ? `Тип «${spec.title}» сохранён.` : `Тип «${spec.title}» добавлен. По нему можно регистрировать станки.`);
+          renderAdminSection(body, "machine_types");
+        } catch (error) { notify(error.message, true); }
+      });
+    };
+    body.querySelector("#new-type").addEventListener("click", () => open());
+    body.querySelectorAll("[data-type]").forEach((b) => b.addEventListener("click", () => open(rows.find((r) => r.key === b.dataset.type))));
+  },
+  async defects(body) {
+    const rows = await api("/api/admin/defects");
+    const form = body.querySelector("#defect-form");
+    const open = (d = null) => {
+      const editing = !!d;
+      const v = d || { code: "", title: "", method: "" };
+      form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Вид дефекта ${esc(v.code)}` : "Новый вид дефекта"}</h3>
+        <div class="form-row two-col"><label>Код<input name="code" value="${esc(v.code)}" ${editing ? "readonly" : ""} required pattern="[A-Z][A-Z0-9_]{1,47}" placeholder="DELAMINATION"></label>
+          <label>Название<input name="title" value="${esc(v.title)}" required placeholder="Отслоение покрытия"></label></div>
+        <label>Метод оценки<textarea name="method" rows="2" required placeholder="Каким методом обнаруживается и где граница визуального метода">${esc(v.method === "—" ? "" : v.method)}</textarea></label>
+        <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Добавить вид"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
+      const f = form.querySelector("form");
+      f.querySelector("[data-cancel]").addEventListener("click", () => { form.innerHTML = ""; });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const spec = { code: f.code.value.trim().toUpperCase(), title: f.title.value, method: f.method.value };
+        try {
+          await api(editing ? `/api/admin/defects/${encodeURIComponent(spec.code)}` : "/api/admin/defects", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(`Вид дефекта ${spec.code} сохранён.`);
+          renderAdminSection(body, "defects");
+        } catch (error) { notify(error.message, true); }
+      });
+    };
+    body.querySelector("#new-defect").addEventListener("click", () => open());
+    body.querySelectorAll("[data-defect]").forEach((b) => b.addEventListener("click", () => open(rows.find((r) => r.code === b.dataset.defect))));
+  },
   async equipment(body) {
-    const [catalog, rows] = await Promise.all([api("/api/catalog"), api("/api/admin/equipment")]);
+    if (!can("equipment_manage")) return;
+    const [catalog, rows] = await Promise.all([api("/api/catalog"), api(can("admin") ? "/api/admin/equipment" : "/api/equipment")]);
     const form = body.querySelector("#machine-form");
+    const types = Object.entries(catalog.machine_types);
     const open = (machine = null) => {
       const editing = !!machine;
-      const m = machine || { equipment_id: "", title: "", machine_type: Object.keys(catalog.machine_types)[0], inventory_no: "", status: "active" };
+      if (!types.length) { notify("В справочнике нет типов станков. Тип добавляет администратор.", true); return; }
+      const m = machine || { equipment_id: "", title: "", machine_type: types[0][0], inventory_no: "", status: "active" };
       let defects = machine ? [...machine.defect_types] : [...catalog.machine_types[m.machine_type].defect_types];
       form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Станок ${esc(m.equipment_id)}` : "Новый станок"}</h3>
         <div class="form-row"><label>Код станка<input name="equipment_id" value="${esc(m.equipment_id)}" ${editing ? "readonly" : ""} required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,47}" placeholder="CNC-03"></label>
           <label>Название<input name="title" value="${esc(m.title)}" required placeholder="Фрезерный центр ЧПУ №3"></label>
           <label>Инвентарный номер<input name="inventory_no" value="${esc(m.inventory_no)}"></label></div>
-        <div class="form-row two-col"><label>Тип станка<select name="machine_type" ${editing ? "disabled" : ""}>${Object.entries(catalog.machine_types).map(([k, t]) => `<option value="${k}" ${k === m.machine_type ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select></label>
-          <label>Состояние<select name="status">${[["active", "в работе"], ["maintenance", "на обслуживании"], ["retired", "списан"]].map(([k, t]) => `<option value="${k}" ${k === m.status ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
+        <div class="form-row two-col"><label>Тип станка (шаблон администратора)<select name="machine_type" ${editing ? "disabled" : ""}>${types.map(([k, t]) => `<option value="${k}" ${k === m.machine_type ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select></label>
+          <label>Состояние<select name="status">${Object.entries(STATUS_EQ).map(([k, [t]]) => `<option value="${k}" ${k === m.status ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
         <div class="muted small" data-processing></div>
-        <div class="field"><span>Виды дефектов, которые возникают на станке</span><div data-picker></div></div>
+        <div class="field"><span>Виды дефектов станка (из дефектов типа)</span><div data-picker></div></div>
         <div data-params></div>
         <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Зарегистрировать станок"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
       const f = form.querySelector("form");
@@ -992,8 +1313,8 @@ const ADMIN_BIND = {
       const drawType = () => {
         const t = catalog.machine_types[typeOf()];
         f.querySelector("[data-processing]").textContent = `Обработка: ${t.processing.join(", ")}.`;
-        picker(f.querySelector("[data-picker]"), { options: catalog.defects.map((d) => ({ value: d.code, label: d.title, hint: d.code })), selected: defects, onChange: (v) => { defects = v; } });
-        f.querySelector("[data-params]").innerHTML = `<h3>Допуски параметров режима</h3><table><tr><th>параметр</th><th>ед.</th><th class="num">нижняя</th><th class="num">верхняя</th></tr>${Object.entries(params()).map(([k, p]) => `<tr><td>${esc(p.title)}</td><td>${esc(p.unit)}</td><td class="num"><input data-low="${k}" type="number" step="any" value="${p.low}" style="width:90px"></td><td class="num"><input data-high="${k}" type="number" step="any" value="${p.high}" style="width:90px"></td></tr>`).join("")}</table>`;
+        picker(f.querySelector("[data-picker]"), { options: defectOptions(catalog).filter((o) => t.defect_types.includes(o.value)), selected: defects, onChange: (v) => { defects = v; } });
+        f.querySelector("[data-params]").innerHTML = `<h3>Допуски параметров режима</h3><table><tr><th>Параметр</th><th>Ед.</th><th class="num">Нижняя граница</th><th class="num">Верхняя граница</th></tr>${Object.entries(params()).map(([k, p]) => `<tr><td>${esc(p.title)}</td><td>${esc(p.unit)}</td><td class="num"><input data-low="${k}" type="number" step="any" value="${p.low}" style="width:90px"></td><td class="num"><input data-high="${k}" type="number" step="any" value="${p.high}" style="width:90px"></td></tr>`).join("")}</table>`;
       };
       f.machine_type.addEventListener("change", () => { defects = [...catalog.machine_types[typeOf()].defect_types]; drawType(); });
       drawType();
@@ -1003,32 +1324,86 @@ const ADMIN_BIND = {
         const parameters = Object.fromEntries(Object.keys(params()).map((k) => [k, { low: Number(f.querySelector(`[data-low="${k}"]`).value), high: Number(f.querySelector(`[data-high="${k}"]`).value) }]));
         const spec = { equipment_id: f.equipment_id.value, title: f.title.value, inventory_no: f.inventory_no.value, machine_type: typeOf(), status: f.status.value, defect_types: defects, parameters };
         try {
-          await api(editing ? `/api/admin/equipment/${encodeURIComponent(spec.equipment_id)}` : "/api/admin/equipment", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
-          notify(editing ? `Станок ${spec.equipment_id} сохранён.` : `Станок ${spec.equipment_id} зарегистрирован — его можно ставить на линию.`);
-          body.innerHTML = await ADMIN.equipment();
-          ADMIN_BIND.equipment(body);
+          await api(editing ? `/api/equipment/${encodeURIComponent(spec.equipment_id)}` : "/api/equipment", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(editing ? `Станок ${spec.equipment_id} сохранён.` : `Станок ${spec.equipment_id} зарегистрирован. Его можно назначить на операцию линии.`);
+          renderAdminSection(body, "equipment");
         } catch (error) { notify(error.message, true); }
       });
       f.scrollIntoView({ behavior: "smooth", block: "nearest" });
     };
-    body.querySelector("#new-machine").addEventListener("click", () => open());
+    body.querySelector("#new-machine")?.addEventListener("click", () => open());
     body.querySelectorAll("[data-machine]").forEach((b) => b.addEventListener("click", () => open(rows.find((r) => r.equipment_id === b.dataset.machine))));
+  },
+  roles(body) {
+    const d = S.adminRoles;
+    const form = body.querySelector("#role-form");
+    const open = (code = null) => {
+      const editing = !!code;
+      const r = code ? { code, ...d.roles[code] } : { code: "", title: "", screen: "controller", permissions: ["read"] };
+      form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Роль «${esc(r.title)}»` : "Новая роль"}</h3>
+        <div class="form-row"><label>Код роли<input name="code" value="${esc(r.code)}" ${editing ? "readonly" : ""} required pattern="[a-z][a-z0-9_]{1,31}" placeholder="auditor"></label>
+          <label>Название<input name="title" value="${esc(r.title)}" required placeholder="Аудитор"></label>
+          <label>Экран роли<select name="screen">${d.screens.map((s) => `<option value="${s.screen}" ${s.screen === r.screen ? "selected" : ""}>${esc(s.title)}</option>`).join("")}</select></label></div>
+        <div class="field"><span>Права</span><div class="checks">${d.permissions.map((p) => `<label class="check"><input type="checkbox" name="perm" value="${p.permission}" ${r.permissions.includes(p.permission) ? "checked" : ""}> ${esc(p.title)}</label>`).join("")}</div></div>
+        <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Добавить роль"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
+      const f = form.querySelector("form");
+      f.querySelector("[data-cancel]").addEventListener("click", () => { form.innerHTML = ""; });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const spec = { code: f.code.value, title: f.title.value, screen: f.screen.value, permissions: [...f.querySelectorAll("[name=perm]:checked")].map((x) => x.value) };
+        try {
+          await api(editing ? `/api/admin/roles/${encodeURIComponent(spec.code)}` : "/api/admin/roles", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(`Роль «${spec.title}» сохранена.`);
+          renderAdminSection(body, "roles");
+        } catch (error) { notify(error.message, true); }
+      });
+    };
+    body.querySelector("#new-role").addEventListener("click", () => open());
+    body.querySelectorAll("[data-role]").forEach((b) => b.addEventListener("click", () => open(b.dataset.role)));
+  },
+  users(body) {
+    const d = S.adminRoles;
+    const form = body.querySelector("#user-form");
+    const open = (userId = null) => {
+      const editing = !!userId;
+      const u = userId ? d.users.find((x) => x.user_id === userId) : { user_id: "", name: "", role: "controller", active: true };
+      form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Пользователь ${esc(u.user_id)}` : "Новый пользователь"}</h3>
+        <div class="form-row"><label>Логин<input name="user_id" value="${esc(u.user_id)}" ${editing ? "readonly" : ""} required pattern="[a-z][a-z0-9_.\\-]{1,63}" placeholder="ivanov"></label>
+          <label>Имя<input name="name" value="${esc(u.name)}" required></label>
+          <label>Роль<select name="role">${Object.entries(d.roles).map(([code, r]) => `<option value="${code}" ${code === u.role ? "selected" : ""}>${esc(r.title)}</option>`).join("")}</select></label></div>
+        <div class="form-row two-col"><label>${editing ? "Новый пароль (не менее 8 символов, пусто — без изменений)" : "Пароль (не менее 8 символов)"}<input name="password" type="password" minlength="8" ${editing ? "" : "required"} autocomplete="new-password"></label>
+          <label>Состояние<select name="active"><option value="true" ${u.active ? "selected" : ""}>Активен</option><option value="false" ${u.active ? "" : "selected"}>Отключён</option></select></label></div>
+        <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Добавить пользователя"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
+      const f = form.querySelector("form");
+      f.querySelector("[data-cancel]").addEventListener("click", () => { form.innerHTML = ""; });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const spec = { user_id: f.user_id.value, name: f.name.value, role: f.role.value, active: f.active.value === "true", password: f.password.value || null };
+        try {
+          await api(editing ? `/api/admin/users/${encodeURIComponent(spec.user_id)}` : "/api/admin/users", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(`Пользователь ${spec.user_id} сохранён.`);
+          renderAdminSection(body, "users");
+        } catch (error) { notify(error.message, true); }
+      });
+    };
+    body.querySelector("#new-user").addEventListener("click", () => open());
+    body.querySelectorAll("[data-user-edit]").forEach((b) => b.addEventListener("click", () => open(b.dataset.userEdit)));
   },
   db(body) {
     body.querySelectorAll("[data-table]").forEach((b) => b.addEventListener("click", async () => {
       const d = await api(`/api/admin/db?table=${encodeURIComponent(b.dataset.table)}`);
       const cols = d.rows.length ? Object.keys(d.rows[0]) : [];
-      body.querySelector("#db-rows").innerHTML = `<h3>${esc(d.table)} · последние ${d.rows.length}</h3><div class="table-wrap"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${d.rows.map((r) => `<tr>${cols.map((c) => `<td class="small mono">${esc(r[c])}</td>`).join("")}</tr>`).join("")}</table></div>`;
+      body.querySelector("#db-rows").innerHTML = `<h3>${esc(d.table)}: последние ${d.rows.length}</h3><div class="table-wrap"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${d.rows.map((r) => `<tr>${cols.map((c) => `<td class="small mono">${esc(r[c])}</td>`).join("")}</tr>`).join("")}</table></div>`;
     }));
   },
   integrity(body) {
     body.querySelector("#verify").addEventListener("click", async () => {
       const r = await api("/api/integrity");
-      body.querySelector("#verify-out").innerHTML = r.ok ? `${badge("журнал цел", "ok")} записей ${r.checked}, якорь №${r.anchor_seq}` : `${badge("обнаружено вмешательство", "bad")}<ul class="plain">${r.problems.map((p) => `<li>запись №${p.seq} (${esc(p.kind || "")}): ${esc(p.problem)}</li>`).join("")}</ul>`;
+      body.querySelector("#verify-out").innerHTML = r.ok ? `${badge("Журнал цел", "ok")} Проверено записей: ${r.checked}, якорь №${r.anchor_seq}.` : `${badge("Обнаружено вмешательство", "bad")}<ul class="plain">${r.problems.map((p) => `<li>Запись №${p.seq} (${esc(p.kind || "")}): ${esc(p.problem)}</li>`).join("")}</ul>`;
     });
   },
   keys(body) {
-    body.querySelector("#rotate").addEventListener("click", async () => { const r = await api("/api/keys/rotate", { method: "POST", body: JSON.stringify({ profile_id: body.querySelector("#profile").value }) }); notify(`Выпущен ${r.key_id}.`); });
+    body.querySelector("#rotate").addEventListener("click", async () => { const r = await api("/api/keys/rotate", { method: "POST", body: JSON.stringify({ profile_id: body.querySelector("#profile").value }) }); notify(`Выпущен ключ ${r.key_id}.`); });
   },
   integration(body) {
     body.querySelector("#sync").addEventListener("click", async () => { try { notify(JSON.stringify(await api("/api/integration/sync", { method: "POST" }))); } catch (error) { notify(error.message, true); } });

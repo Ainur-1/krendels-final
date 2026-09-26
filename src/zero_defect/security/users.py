@@ -119,6 +119,32 @@ class UserStore:
         if result.rowcount != 1:
             raise KeyError(user_id)
 
+    def listing(self) -> list[dict]:
+        """Все пользователи, включая отключённых, — для администрирования."""
+
+        with self.database.engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    users_table.c.user_id,
+                    users_table.c.name,
+                    users_table.c.role,
+                    users_table.c.active,
+                ).order_by(users_table.c.user_id)
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    def update(self, user_id: str, name: str, role: str, active: bool) -> None:
+        if role not in PERMISSIONS or role == "edge":
+            raise ValueError(f"роль {role!r} неизвестна")
+        with self.database.engine.begin() as conn:
+            result = conn.execute(
+                update(users_table)
+                .where(users_table.c.user_id == user_id)
+                .values(name=name, role=role, active=active)
+            )
+        if result.rowcount != 1:
+            raise KeyError(user_id)
+
     def add(self, user_id: str, name: str, role: str) -> None:
         if role not in PERMISSIONS or role == "edge":
             raise ValueError(f"роль {role!r} неизвестна")

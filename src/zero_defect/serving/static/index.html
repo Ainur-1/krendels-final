@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zero Defect</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.4.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.5.0">
 </head>
 <body>
   <section id="login" class="login hidden">
@@ -19,7 +19,7 @@
       <!-- Демонстрационный вход по ролям: подставляет логин и пароль роли в форму выше.
            При встраивании в систему предприятия блок удаляется целиком — вход остаётся. -->
       <section id="demo-roles" class="demo-roles hidden">
-        <p class="muted small">Демонстрация: выберите роль — логин и пароль подставятся сами.</p>
+        <p class="muted small">Демонстрационный режим. При выборе роли логин и пароль подставляются автоматически.</p>
         <div id="role-cards" class="role-grid"></div>
       </section>
     </div>
@@ -37,23 +37,25 @@
       <button id="logout" class="btn small" title="Выйти">⏻</button>
     </header>
 
-    <section id="stages-drop" class="dropdown" aria-hidden="true">
-      <div class="dropdown-clip"><div class="dropdown-inner">
-        <div class="card-head"><h2>Этапы процесса</h2><div class="row">
-          <select id="f-type" aria-label="Тип изделия"></select>
-          <select id="f-shift" aria-label="Смена"><option value="">все смены</option><option value="S1">смена S1</option><option value="S2">смена S2</option></select>
-          <label class="muted">с <input id="f-since" type="datetime-local"></label>
-          <label class="muted">по <input id="f-until" type="datetime-local"></label>
-          <button id="stages-close" class="btn small">Скрыть ▲</button>
-        </div></div>
-        <div id="stages" class="table-wrap"></div>
-      </div></div>
-    </section>
+    <main id="admin-view" class="admin-page hidden"></main>
 
     <main id="plant-view" class="plant hidden"></main>
 
     <main id="line-view" class="line-layout hidden">
       <aside id="role-panel" class="card area-left"></aside>
+
+      <section id="stages-drop" class="dropdown area-stages" aria-hidden="true">
+        <div class="dropdown-clip"><div class="dropdown-inner card">
+          <div class="card-head"><h2>Этапы процесса</h2><div class="row">
+            <span id="stages-period" class="muted small"></span>
+            <select id="f-type" aria-label="Тип изделия"></select>
+            <select id="f-shift" aria-label="Смена"><option value="">Все смены</option><option value="S1">Смена S1</option><option value="S2">Смена S2</option></select>
+            <button id="stages-close" class="btn small">Скрыть ▲</button>
+          </div></div>
+          <div id="stages" class="table-wrap"></div>
+        </div></div>
+      </section>
+
       <section class="card area-graph">
         <div class="graph-toolbar">
           <div class="row"><button id="left-toggle" class="btn small hidden" title="Администрирование" aria-label="Открыть панель администрирования">☰</button><b id="line-title"></b><span id="moment-badge"></span></div>
@@ -64,20 +66,17 @@
             <button class="btn small" data-zoom="fit" title="Вписать граф">⤢</button>
           </div>
         </div>
+        <div id="focus-note" class="focus-note hidden"></div>
         <div class="graph-wrap"><svg id="graph" class="graph" role="img" aria-label="Граф линии"></svg><div id="graph-tip" class="graph-tip hidden"></div></div>
-        <div class="legend">
-          <span><i style="background:var(--accent)"></i>в работе</span>
-          <span><i style="background:var(--ok)"></i>годно</span>
-          <span><i style="background:var(--bad)"></i>несоответствие</span>
-          <span><i style="background:var(--warn)"></i>оценка невозможна</span>
-          <span>метки станка: <b style="color:var(--bad)">красная</b> — обнаружено здесь, <b style="color:var(--origin)">оранжевая</b> — возникло здесь; нажмите метку</span>
-        </div>
+        <div id="graph-legend" class="legend"></div>
       </section>
-      <aside class="area-drawer"><section id="drawer" class="card"></section></aside>
+
       <section id="timeline" class="card area-timeline"></section>
+
+      <section id="details" class="card area-details"></section>
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/static/app.js?v=0.4.0"></script>
+  <script type="module" src="/static/app.js?v=0.5.0"></script>
 </body>
 </html>

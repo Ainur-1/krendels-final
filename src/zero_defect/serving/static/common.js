@@ -12,15 +12,18 @@ export const badge = (text, tone = "plain") => `<span class="badge ${tone}">${es
 
 export const L = {
   role: { controller: "Контролёр ОТК", master: "Мастер участка", technologist: "Технолог", manager: "Руководитель производства", admin: "Администратор", edge: "Источник событий" },
-  status: { conforming: ["годно", "ok"], nonconforming: ["несоответствие", "bad"], suspect: ["на рассмотрении", "bad"], not_assessable: ["оценка невозможна", "warn"], in_progress: ["в работе", "info"], unknown: ["нет данных", "plain"] },
-  nc: { reported: ["сообщение о признаке", "warn"], under_review: ["рассматривается", "info"], recheck_requested: ["доп. проверка", "info"], confirmed: ["подтверждено", "bad"], rejected: ["отклонено", "plain"], closed: ["закрыто", "ok"] },
-  stage: { incoming: "входной брак", operation: "возникло на операции", between_checks: "между проверками", unknown: "этап не установлен" },
-  conf: { strong: ["основания сильные", "ok"], moderate: ["основания умеренные", "warn"], insufficient: ["сведений недостаточно", "bad"] },
-  cause: { incoming_defect: "входной брак", equipment_problem: "проблема оборудования", operator_error: "ошибка оператора", process_issue: "техпроцесс", handling_damage: "повреждение при перемещении", not_established: "не установлена", other: "иное" },
-  action: { start_review: "Начать рассмотрение", request_recheck: "Назначить доп. проверку", confirm: "Подтвердить несоответствие", reject: "Отклонить сигнал", close: "Закрыть (устранено)", reopen: "Открыть заново", confirm_cause: "Установить причину" },
-  pathStatus: { pending: "ещё не прошёл", passed: "пройден", processing: "в работе", reworked: "доработка", not_assessable: "оценка невозможна", possible_origin: "мог возникнуть здесь", defect_detected: "обнаружен здесь", defect_origin: "возник здесь" },
-  result: { no_defect_signs: ["признаков нет", "ok"], defect_signs_found: ["признаки дефекта", "bad"], not_assessable: ["оценка невозможна", "warn"] },
-  event: { item_registered: "поступление", component_linked: "установка компонента", operation_started: "начало операции", operation_paused: "пауза", operation_resumed: "возобновление", operation_finished: "завершение операции", inspection_reported: "контроль", operator_action: "действие оператора", machine_state: "состояние станка" },
+  status: { conforming: ["Годно", "ok"], nonconforming: ["Несоответствие", "bad"], suspect: ["На рассмотрении", "bad"], not_assessable: ["Оценка невозможна", "warn"], in_progress: ["В работе", "info"], unknown: ["Нет данных", "plain"] },
+  nc: { reported: ["Сигнал анализатора", "warn"], under_review: ["На рассмотрении", "info"], recheck_requested: ["Назначена повторная проверка", "info"], confirmed: ["Подтверждено", "bad"], rejected: ["Сигнал отклонён", "plain"], closed: ["Устранено", "ok"] },
+  stage: { incoming: "Входной брак", operation: "Возникло на операции", between_checks: "Между проверками", unknown: "Этап не установлен" },
+  conf: { strong: ["Основания достаточные", "ok"], moderate: ["Основания частичные", "warn"], insufficient: ["Сведений недостаточно", "bad"] },
+  cause: { incoming_defect: "Входной брак", equipment_problem: "Проблема оборудования", operator_error: "Ошибка оператора", process_issue: "Техпроцесс", handling_damage: "Повреждение при перемещении", not_established: "Не установлена", other: "Иная" },
+  action: { start_review: "Начать рассмотрение", request_recheck: "Назначить повторную проверку", confirm: "Подтвердить несоответствие", reject: "Отклонить сигнал", close: "Закрыть как устранённое", reopen: "Открыть повторно", confirm_cause: "Установить причину" },
+  pathStatus: { pending: "Не пройден", passed: "Пройден", processing: "В работе", reworked: "Доработка", not_assessable: "Оценка невозможна", possible_origin: "Возможный этап возникновения", defect_detected: "Дефект обнаружен", defect_origin: "Этап возникновения" },
+  // Шаги маршрута изделия в хронологии: проблемный проход и повторный проход различаются.
+  visit: { passed: "Пройден", possible_origin: "Возможный этап возникновения", origin: "Этап возникновения", defect: "Дефект обнаружен", not_assessable: "Оценка невозможна", rework: "Доработка", ok: "Успешно", processing: "В работе", pending: "Не пройден" },
+  runOutcome: { completed: "Завершено", in_progress: "В работе", reworked: "Доработка", paused: "Пауза" },
+  result: { no_defect_signs: ["Признаков нет", "ok"], defect_signs_found: ["Признаки дефекта", "bad"], not_assessable: ["Оценка невозможна", "warn"] },
+  event: { item_registered: "Поступление", component_linked: "Установка компонента", operation_started: "Начало операции", operation_paused: "Пауза", operation_resumed: "Возобновление", operation_finished: "Завершение операции", inspection_reported: "Контроль", operator_action: "Действие оператора", machine_state: "Состояние станка" },
 };
 
 // Токен в localStorage: пульт эмулятора открывается в отдельной вкладке и должен знать,

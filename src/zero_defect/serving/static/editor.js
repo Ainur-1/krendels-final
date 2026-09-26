@@ -4,7 +4,7 @@
 // цикл, связь в никуда, незарегистрированный станок или чужой для станка дефект не
 // сохранятся. Станки берутся только из справочника оборудования: новый станок заводит
 // администратор. Экономика линии задаётся в одном месте — кнопкой «Экономика» на линии.
-import { api, esc, marquee, modal, notify, picker } from "./common.js?v=0.4.0";
+import { api, esc, marquee, modal, notify, picker } from "./common.js?v=0.5.0";
 
 const BLOCK_W = 170, BLOCK_H = 74;
 const KINDS = {
@@ -51,13 +51,13 @@ export async function openEditor({ lines, config = null, onSaved }) {
   let selected = null;
   let counter = line.nodes.length;
   const { dialog, close } = modal(`
-    <div class="modal-head"><h2>${editing ? `Линия ${esc(line.line_id)} — изменение` : "Новая производственная линия"}</h2><button class="btn small" data-close>✕</button></div>
+    <div class="modal-head"><h2>${editing ? `Изменение линии ${esc(line.line_id)}` : "Новая производственная линия"}</h2><button class="btn small" data-close>✕</button></div>
     <div class="editor">
       <aside class="palette">
         <h3>Блоки</h3>
         <div class="palette-item" draggable="true" data-kind="inspection">◉ Контроль<span>входной, после операции, финальный</span></div>
         <div class="palette-item" draggable="true" data-kind="operation">⚙ Операция<span>станок из справочника, обработка, операторы</span></div>
-        <p class="muted">Перетащите блок на холст. Соедините блоки, протянув линию от правого кружка к левому кружку следующего. Два входа в одну операцию — это сборка.</p>
+        <p class="muted">Перетащите блок на холст. Соедините блоки, протянув линию от правого кружка к левому кружку следующего. Операция с двумя входами является сборкой.</p>
         <h3>Линия</h3>
         <form id="ed-meta" class="form">
           <label>Код линии<input name="line_id" value="${esc(line.line_id)}" ${editing ? "readonly" : ""} required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,31}"></label>
@@ -201,7 +201,7 @@ export async function openEditor({ lines, config = null, onSaved }) {
     }
     const n = selected?.node && node(selected.node);
     if (!n) {
-      inspector.innerHTML = `<h3>Параметры блока</h3><p class="muted">Выберите блок на холсте — здесь появятся его параметры: название, длительность, станок и обработка, виды дефектов.</p>`;
+      inspector.innerHTML = `<h3>Параметры блока</h3><p class="muted">Выберите блок на холсте. Здесь появятся его параметры: название, длительность, станок, обработка и виды дефектов.</p>`;
       return;
     }
     const isSource = !line.edges.some(([, t]) => t === n.node_id);
@@ -213,7 +213,7 @@ export async function openEditor({ lines, config = null, onSaved }) {
         ${n.kind === "operation" ? machineFields(n)
         : `<div class="field"><span>Виды дефектов</span><div data-picker="defect_types"></div></div>
           <label>Вид контроля<select name="checkpoint_kind"><option value="">по месту в линии</option>${["incoming", "after_operation", "final"].map((k) => `<option value="${k}" ${n.checkpoint_kind === k ? "selected" : ""}>${{ incoming: "входной", after_operation: "после операции", final: "финальный" }[k]}</option>`).join("")}</select></label>`}
-        ${isSource ? `<label>Тип изделия на входе<input name="item_type_id" value="${esc(n.item_type_id || "")}" placeholder="по умолчанию — изделие линии"></label>
+        ${isSource ? `<label>Тип изделия на входе<input name="item_type_id" value="${esc(n.item_type_id || "")}" placeholder="По умолчанию: изделие линии"></label>
           <label>Происхождение<select name="origin"><option value="manufactured" ${n.origin !== "purchased" ? "selected" : ""}>изготавливается</option><option value="purchased" ${n.origin === "purchased" ? "selected" : ""}>покупное</option></select></label>` : ""}
       </form>
       <button class="btn danger" id="del-node" style="margin-top:10px">Удалить блок</button>`;

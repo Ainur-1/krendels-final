@@ -14,6 +14,13 @@
   --warn-soft: #fbefd9;
   --fair: #a88a00;
   --fair-soft: #f8f1cc;
+  --amber: #d99100;
+  --amber-soft: #fff1d1;
+  --resolved: #a3abb6;
+  --resolved-amber: #d6c7a6;
+  --sev-minor: #f3a6a6;
+  --sev-major: #e03131;
+  --sev-critical: #8b1a1a;
   --bad: #c7362b;
   --bad-soft: #fbe4e1;
   --info: #5b4bc4;
@@ -31,7 +38,7 @@
   :root {
     --bg: #0f1319; --panel: #171d25; --panel-2: #1c232d; --text: #e3e8ef; --muted: #95a1b1;
     --line: #2a333f; --accent: #7d9cff; --accent-soft: #222c44; --ok: #55c688; --ok-soft: #173024;
-    --warn: #e7a846; --warn-soft: #362a15; --fair: #e2c64f; --fair-soft: #332d12; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
+    --warn: #e7a846; --warn-soft: #362a15; --fair: #e2c64f; --fair-soft: #332d12; --amber: #f0b429; --amber-soft: #3a2c0d; --resolved: #5b6572; --resolved-amber: #6e6450; --sev-minor: #f7b0b0; --sev-major: #f06262; --sev-critical: #c43b3b; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
     --info-soft: #28243f; --origin: #f39a4c; --node-op: #1d2638; --node-qc: #1b2a24; --flow: #3d4b5e;
     color-scheme: dark;
   }
@@ -453,3 +460,97 @@ g.mq-track { animation: mq linear infinite; }
 /* поля панели параметров не шире самой панели: длинное название станка в списке её не распирает */
 .inspector select, .inspector input { width: 100%; }
 .machine-card { min-width: 0; overflow-wrap: anywhere; }
+
+/* === версия 0.5: промежуток на шкале, вкладки под линией, фокус на проблеме ============= */
+
+/* экран линии: этапы, граф, шкала и подробности — одной колонкой справа от панели роли */
+.line-layout { grid-template-areas: "left stages" "left graph" "left timeline" "left details"; grid-template-rows: auto auto auto 1fr; }
+.area-stages { grid-area: stages; min-width: 0; }
+.area-details { grid-area: details; min-width: 0; }
+.area-drawer { display: none; }
+.area-stages .dropdown-inner { max-width: none; border-top: 1px solid var(--line); border-radius: var(--radius); box-shadow: none; max-height: 70vh; }
+.dropdown.area-stages:not(.open) { margin-bottom: calc(-1 * var(--gap)); }
+@media (max-width: 1100px) {
+  .line-layout { grid-template-areas: "stages" "graph" "timeline" "details" "left"; grid-template-rows: none; }
+}
+
+.amber-text { color: var(--amber); }
+.legend .sq { border-radius: 3px; }
+.legend-sep { margin-left: 8px; font-weight: 600; }
+
+/* граф: крупные круги со значением внутри, кольцо фокуса вокруг выбранного этапа */
+svg .count-pill .count { font-size: 11px; font-weight: 700; }
+svg .node .focus-ring { fill: none; stroke: transparent; stroke-width: 4; }
+svg .node.focused .focus-ring { stroke: var(--bad); animation: focus-pulse 1.4s ease-in-out infinite; }
+@keyframes focus-pulse { 50% { stroke-opacity: .25; } }
+/* подпись фокуса стоит над графом, а не поверх него: этапы верхнего ряда не перекрываются */
+.focus-note { background: var(--panel); border: 2px solid var(--bad); border-radius: 10px; padding: 6px 10px; margin: 8px;
+  font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* шкала: отметки проблем, промежуток и два ползунка */
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; }
+.seg .btn { border-color: transparent; }
+.tl-track { position: relative; padding-top: 22px; }
+.tl-markers { top: 2px; height: 16px; }
+.tl-mark { top: 2px; width: 10px; height: 14px; margin-left: -5px; border-radius: 3px; }
+.tl-mark.m-bad, .tl-key i.m-bad { background: var(--sev-major); }
+.tl-mark.m-bad.sev-minor { background: var(--sev-minor); }
+.tl-mark.m-bad.sev-critical { background: var(--sev-critical); }
+.tl-mark.m-amber, .tl-key i.m-amber { background: var(--amber); }
+.tl-mark.m-ok, .tl-key i.m-ok { background: var(--ok); }
+.tl-mark.outside { opacity: .35; }
+.tl-mark.focused { transform: scale(1.5); outline: 2px solid var(--text); outline-offset: 1px; z-index: 2; opacity: 1; }
+.tl-rail { position: relative; height: 22px; margin: 4px 8px 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
+.tl-sel { position: absolute; top: 0; bottom: 0; background: var(--accent-soft); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+.tl-handle { position: absolute; top: -5px; width: 14px; height: 30px; margin-left: -7px; border-radius: 5px; border: 2px solid var(--accent); background: var(--panel); cursor: ew-resize; padding: 0; }
+.tl-handle.end { background: var(--accent); }
+
+/* вкладки под линией */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px -4px 12px; padding: 0 4px; }
+.tab { border: none; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 600; }
+.tab.filled { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-hint { color: var(--muted); padding: 14px 4px; max-width: 760px; }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1100px) { .detail-grid { grid-template-columns: 1fr; } }
+.kpis.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* очередь проблем: оттенки красного по критичности, янтарный для «оценка невозможна» */
+.list li.problem { cursor: pointer; border-left: 5px solid var(--sev-major); }
+.list li.problem.sev-minor { border-left-color: var(--sev-minor); }
+.list li.problem.sev-major { border-left-color: var(--sev-major); }
+.list li.problem.sev-critical { border-left-color: var(--sev-critical); background: var(--bad-soft); }
+.list li.problem.sev-amber { border-left-color: var(--amber); background: var(--amber-soft); }
+.list li.problem.resolved { border-left-color: var(--resolved); opacity: .75; }
+.list li.problem.focused { outline: 2px solid var(--accent); }
+.list li.problem:hover { border-color: var(--accent); }
+
+/* маршрут изделия в хронологии */
+.hop .node-chip { width: 140px; display: grid; gap: 2px; }
+.vt-passed .node-chip, .vt-ok .node-chip { border-color: var(--ok); }
+.vt-ok .node-chip { background: var(--ok-soft); }
+.vt-origin .node-chip { border-color: var(--sev-critical); background: var(--bad-soft); }
+.vt-possible_origin .node-chip { border-color: var(--amber); border-style: dashed; }
+.vt-defect .node-chip { border-color: var(--sev-major); background: var(--bad-soft); }
+.vt-not_assessable .node-chip { border-color: var(--amber); background: var(--amber-soft); }
+.vt-rework .node-chip { border-color: var(--info); }
+.vt-processing .node-chip { border-color: var(--accent); }
+.vt-pending .node-chip { border-style: dashed; color: var(--muted); }
+.vt-key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid var(--line); margin-right: 4px; vertical-align: -1px; }
+.vt-key.vt-passed i, .vt-key.vt-ok i { border-color: var(--ok); }
+.vt-key.vt-ok i { background: var(--ok-soft); }
+.vt-key.vt-origin i { border-color: var(--sev-critical); background: var(--bad-soft); }
+.vt-key.vt-possible_origin i { border-color: var(--amber); border-style: dashed; }
+.vt-key.vt-defect i { border-color: var(--sev-major); background: var(--bad-soft); }
+.vt-key.vt-not_assessable i { border-color: var(--amber); background: var(--amber-soft); }
+.vt-key.vt-rework i { border-color: var(--info); }
+.vt-key.vt-pending i { border-style: dashed; }
+
+/* администрирование — отдельный экран, главный для администратора */
+.admin-page { padding: var(--gap); max-width: 1920px; margin: 0 auto; }
+.admin-page-head h1 { margin: 0 0 4px; font-size: 22px; }
+.admin-page-head p { margin: 0 0 var(--gap); }
+.admin-page .admin { padding: 0; min-height: 70vh; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 16px; color: var(--text); font-size: 13px; }
+.check { display: flex; gap: 8px; align-items: flex-start; }
+.crumbs a { white-space: nowrap; }

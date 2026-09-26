@@ -30,6 +30,35 @@
         "title": "DecisionRequest",
         "type": "object"
       },
+      "DefectSpec": {
+        "properties": {
+          "code": {
+            "maxLength": 48,
+            "minLength": 2,
+            "title": "Code",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "title",
+          "method"
+        ],
+        "title": "DefectSpec",
+        "type": "object"
+      },
       "EmulationRequest": {
         "properties": {
           "action": {
@@ -453,7 +482,7 @@
         "type": "object"
       },
       "MachineSpec": {
-        "description": "Станок, как его заводит администратор: паспорт, дефекты и допуски параметров.",
+        "description": "Станок, как его заводит технолог по типу: паспорт, дефекты и допуски параметров.",
         "properties": {
           "defect_types": {
             "anyOf": [
@@ -519,6 +548,53 @@
         "title": "MachineSpec",
         "type": "object"
       },
+      "MachineTypeSpec": {
+        "properties": {
+          "defect_types": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Defect Types",
+            "type": "array"
+          },
+          "key": {
+            "maxLength": 48,
+            "minLength": 2,
+            "title": "Key",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "default": {},
+            "title": "Parameters",
+            "type": "object"
+          },
+          "processing": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Processing",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title"
+        ],
+        "title": "MachineTypeSpec",
+        "type": "object"
+      },
       "PasswordLogin": {
         "properties": {
           "password": {
@@ -535,6 +611,41 @@
           "password"
         ],
         "title": "PasswordLogin",
+        "type": "object"
+      },
+      "RoleSpec": {
+        "properties": {
+          "code": {
+            "maxLength": 32,
+            "minLength": 2,
+            "title": "Code",
+            "type": "string"
+          },
+          "permissions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "screen": {
+            "title": "Screen",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "title",
+          "screen"
+        ],
+        "title": "RoleSpec",
         "type": "object"
       },
       "RotateRequest": {
@@ -634,6 +745,50 @@
           "duration_min"
         ],
         "title": "StepSpec",
+        "type": "object"
+      },
+      "UserSpec": {
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "user_id": {
+            "pattern": "^[a-z][a-z0-9_.-]{1,63}$",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "role"
+        ],
+        "title": "UserSpec",
         "type": "object"
       },
       "ValidationError": {
@@ -907,11 +1062,133 @@
           }
         },
         "summary": "Defects"
+      },
+      "post": {
+        "operationId": "defect_create_api_admin_defects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefectSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Defect Create Api Admin Defects Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Defect Create"
+      }
+    },
+    "/api/admin/defects/{code}": {
+      "put": {
+        "operationId": "defect_update_api_admin_defects__code__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefectSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Defect Update Api Admin Defects  Code  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Defect Update"
       }
     },
     "/api/admin/equipment": {
       "get": {
-        "description": "Справочник станков: паспорт, где стоит по конфигурации линий, последнее состояние.",
         "operationId": "equipment_list_api_admin_equipment_get",
         "parameters": [
           {
@@ -959,9 +1236,60 @@
           }
         },
         "summary": "Equipment List"
+      }
+    },
+    "/api/admin/machine-types": {
+      "get": {
+        "operationId": "machine_types_api_admin_machine_types_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Machine Types Api Admin Machine Types Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Machine Types"
       },
       "post": {
-        "operationId": "equipment_create_api_admin_equipment_post",
+        "operationId": "machine_type_create_api_admin_machine_types_post",
         "parameters": [
           {
             "in": "header",
@@ -984,7 +1312,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MachineSpec"
+                "$ref": "#/components/schemas/MachineTypeSpec"
               }
             }
           },
@@ -996,7 +1324,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Equipment Create Api Admin Equipment Post",
+                  "title": "Response Machine Type Create Api Admin Machine Types Post",
                   "type": "object"
                 }
               }
@@ -1014,19 +1342,19 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Equipment Create"
+        "summary": "Machine Type Create"
       }
     },
-    "/api/admin/equipment/{equipment_id}": {
+    "/api/admin/machine-types/{key}": {
       "put": {
-        "operationId": "equipment_update_api_admin_equipment__equipment_id__put",
+        "operationId": "machine_type_update_api_admin_machine_types__key__put",
         "parameters": [
           {
             "in": "path",
-            "name": "equipment_id",
+            "name": "key",
             "required": true,
             "schema": {
-              "title": "Equipment Id",
+              "title": "Key",
               "type": "string"
             }
           },
@@ -1051,7 +1379,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MachineSpec"
+                "$ref": "#/components/schemas/MachineTypeSpec"
               }
             }
           },
@@ -1063,7 +1391,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Equipment Update Api Admin Equipment  Equipment Id  Put",
+                  "title": "Response Machine Type Update Api Admin Machine Types  Key  Put",
                   "type": "object"
                 }
               }
@@ -1081,7 +1409,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Equipment Update"
+        "summary": "Machine Type Update"
       }
     },
     "/api/admin/roles": {
@@ -1130,6 +1458,129 @@
           }
         },
         "summary": "Roles"
+      },
+      "post": {
+        "operationId": "role_create_api_admin_roles_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Role Create Api Admin Roles Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Role Create"
+      }
+    },
+    "/api/admin/roles/{code}": {
+      "put": {
+        "operationId": "role_update_api_admin_roles__code__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Role Update Api Admin Roles  Code  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Role Update"
       }
     },
     "/api/admin/users": {
@@ -1181,6 +1632,129 @@
           }
         },
         "summary": "Admin Users"
+      },
+      "post": {
+        "operationId": "user_create_api_admin_users_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response User Create Api Admin Users Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Create"
+      }
+    },
+    "/api/admin/users/{user_id}": {
+      "put": {
+        "operationId": "user_update_api_admin_users__user_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response User Update Api Admin Users  User Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Update"
       }
     },
     "/api/audit": {
@@ -1483,6 +2057,180 @@
           }
         },
         "summary": "Contract"
+      }
+    },
+    "/api/equipment": {
+      "get": {
+        "operationId": "equipment_for_technologist_api_equipment_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Equipment For Technologist Api Equipment Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment For Technologist"
+      },
+      "post": {
+        "operationId": "equipment_create_api_equipment_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MachineSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Equipment Create Api Equipment Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment Create"
+      }
+    },
+    "/api/equipment/{equipment_id}": {
+      "put": {
+        "operationId": "equipment_update_api_equipment__equipment_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "equipment_id",
+            "required": true,
+            "schema": {
+              "title": "Equipment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MachineSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Equipment Update Api Equipment  Equipment Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment Update"
       }
     },
     "/api/events": {
@@ -3072,6 +3820,80 @@
           }
         },
         "summary": "Overview"
+      }
+    },
+    "/api/lines/{line_id}/problems": {
+      "get": {
+        "description": "Проблемы линии: активные и решённые. Без at — очередь контролёра, она всегда о\nнастоящем и не зависит от шкалы времени. С at — проблемы на тот момент, у каждой\nотметка, решена ли она к настоящему.",
+        "operationId": "problems_api_lines__line_id__problems_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "line_id",
+            "required": true,
+            "schema": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Problems Api Lines  Line Id  Problems Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Problems"
       }
     },
     "/api/lines/{line_id}/runs": {

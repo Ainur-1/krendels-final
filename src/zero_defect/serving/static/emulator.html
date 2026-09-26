@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Пульт эмулятора</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.4.0">
+  <link rel="stylesheet" href="/static/styles.css?v=0.5.0">
 </head>
 <body class="emulator-page">
   <header class="top">
     <div class="brand"><div class="logo emu">E</div><b>Пульт эмулятора</b></div>
-    <span class="muted small">вне системы: эмулятор ведёт себя как источники событий линии</span>
+    <span class="muted small">Эмулятор работает вне системы и передаёт события как источники линии.</span>
     <div class="grow"></div>
     <span id="user-chip" class="chip"></span>
-    <a class="btn small" href="/">← В систему</a>
+    <a class="btn small" href="/">← Вернуться в систему</a>
   </header>
   <main class="emu-layout">
     <section class="card">
@@ -21,7 +21,7 @@
     </section>
     <section class="card">
       <div class="card-head"><h2>Прогон по данным контракта</h2></div>
-      <p class="muted small">Параметры прогона вбиваются из контракта: сколько изделий, за сколько секунд показать, вероятности дефектов по этапам и принудительные дефекты «изделие № → этап». Ускорение система подберёт сама. Новую линию собирают в системе — блочным редактором.</p>
+      <p class="muted small">Параметры прогона задаются по контракту: число изделий, длительность показа, вероятности дефектов по этапам и принудительные дефекты для выбранных изделий. Ускорение рассчитывается автоматически. Новая линия создаётся в системе в блочном редакторе.</p>
       <div id="emu-run"></div>
       <details style="margin-top:14px"><summary class="muted">Импорт JSON-файла zd-flow/1</summary>
         <p class="muted small">Для контракта, пришедшего файлом: линия и прогон одним документом (формат описан в docs/flows.md).</p>
@@ -31,6 +31,6 @@
     </section>
   </main>
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/static/emulator.js?v=0.4.0"></script>
+  <script type="module" src="/static/emulator.js?v=0.5.0"></script>
 </body>
 </html>

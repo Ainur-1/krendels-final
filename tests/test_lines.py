@@ -343,33 +343,89 @@ def test_operation_uses_only_registered_equipment(api, changes, reason):
     assert response.status_code == 422 and reason in response.json()["detail"]
 
 
-def test_admin_registers_machine_and_manager_picks_it(api):
+def test_technologist_registers_machine_and_manager_picks_it(api):
     spec = {
         "equipment_id": "WELD-09",
         "title": "Аргонодуговая установка №9",
         "machine_type": "welder",
         "parameters": {"current_a": {"low": 150, "high": 180}},
     }
-    assert (
-        api.post("/api/admin/equipment", json=spec, headers=login(api, "manager")).status_code
-        == 403
-    )
-    admin = login(api, "administrator")
-    created = api.post("/api/admin/equipment", json=spec, headers=admin).json()
+    manager = login(api, "manager")
+    assert api.post("/api/equipment", json=spec, headers=manager).status_code == 403
+    tech = login(api, "technologist")
+    created = api.post("/api/equipment", json=spec, headers=tech).json()
     assert created["defect_types"] == ["POROSITY", "LACK_OF_FUSION", "CRACK"]
     assert created["parameters"]["current_a"]["high"] == 180
-    assert api.post("/api/admin/equipment", json=spec, headers=admin).status_code == 422
+    assert api.post("/api/equipment", json=spec, headers=tech).status_code == 422
     bad = {**spec, "parameters": {"current_a": {"low": 200, "high": 180}}}
-    assert api.put("/api/admin/equipment/WELD-09", json=bad, headers=admin).status_code == 422
-    catalog = api.get("/api/catalog", headers=login(api, "manager")).json()
+    assert api.put("/api/equipment/WELD-09", json=bad, headers=tech).status_code == 422
+    catalog = api.get("/api/catalog", headers=manager).json()
     assert "WELD-09" in {machine["equipment_id"] for machine in catalog["equipment"]}
     assert "аргонодуговая сварка" in catalog["machine_types"]["welder"]["processing"]
     graph = _with_operation(
         equipment_id="WELD-09", processing="прихватка", defect_types=["POROSITY"]
     )
+    assert api.post("/api/lines/graph", json=graph, headers=manager).status_code == 200
+
+
+def test_admin_describes_defect_and_machine_type_templates(api):
+    admin = login(api, "administrator")
+    defect = {
+        "code": "DELAMINATION_X",
+        "title": "Отслоение покрытия",
+        "method": "камера, косой свет",
+    }
     assert (
-        api.post("/api/lines/graph", json=graph, headers=login(api, "manager")).status_code == 200
+        api.post("/api/admin/defects", json=defect, headers=login(api, "technologist")).status_code
+        == 403
     )
+    assert api.post("/api/admin/defects", json=defect, headers=admin).status_code == 200
+    kind = {
+        "key": "plasma_spray",
+        "title": "Установка плазменного напыления",
+        "processing": ["напыление"],
+        "defect_types": ["DELAMINATION_X", "SAG"],
+        "parameters": {
+            "arc_power_kw": {"title": "Мощность дуги", "unit": "кВт", "low": 30, "high": 45}
+        },
+    }
+    assert api.post("/api/admin/machine-types", json=kind, headers=admin).status_code == 200
+    broken = {**kind, "key": "plasma_bad", "defect_types": ["NO_SUCH"]}
+    assert api.post("/api/admin/machine-types", json=broken, headers=admin).status_code == 422
+    machine = {"equipment_id": "PLASMA-01", "title": "Напыление №1", "machine_type": "plasma_spray"}
+    made = api.post("/api/equipment", json=machine, headers=login(api, "technologist")).json()
+    assert made["defect_types"] == ["DELAMINATION_X", "SAG"]
+    assert made["parameters"]["arc_power_kw"]["unit"] == "кВт"
+
+
+def test_admin_creates_role_and_user_who_can_log_in(api):
+    admin = login(api, "administrator")
+    role = {
+        "code": "auditor",
+        "title": "Аудитор",
+        "screen": "manager",
+        "permissions": ["read", "export"],
+    }
+    assert api.post("/api/admin/roles", json=role, headers=admin).status_code == 200
+    user = {
+        "user_id": "auditor1",
+        "name": "Аудитор 1",
+        "role": "auditor",
+        "password": "длинный-пароль",
+    }
+    assert api.post("/api/admin/users", json=user, headers=admin).status_code == 200
+    token = api.post(
+        "/api/auth/login", json={"user_id": "auditor1", "password": "длинный-пароль"}
+    ).json()["token"]
+    me = api.get("/api/me", headers={"Authorization": f"Bearer {token}"}).json()
+    assert me["screen"] == "manager" and "export" in me["permissions"]
+    lockout = {
+        "code": "admin",
+        "title": "Администратор",
+        "screen": "admin",
+        "permissions": ["read"],
+    }
+    assert api.put("/api/admin/roles/admin", json=lockout, headers=admin).status_code == 422
 
 
 def test_stage_shows_machine_readings_with_tolerances(api):
@@ -413,15 +469,54 @@ def test_configured_run_on_existing_line(api):
 def test_state_at_moment_hides_the_future(api):
     headers = login(api, "controller")
     timeline = api.get("/api/lines/L1/timeline", headers=headers).json()
-    detected = [m for m in timeline["markers"] if m["kind"] == "detected"]
+    detected = [m for m in timeline["markers"] if m["kind"] == "problem"]
     assert detected, "в демонстрационной базе должны быть обнаружения"
     first = min(detected, key=lambda m: m["at"])
     before = datetime.fromisoformat(first["at"]).timestamp() - 1
     moment = datetime.fromtimestamp(before, UTC).isoformat()
-    past = api.get("/api/lines/L1/overview", params={"at": moment}, headers=headers).json()
-    assert first["nc_id"] not in {card["nc_id"] for card in past["queue"]}
+    past = api.get("/api/lines/L1/problems", params={"at": moment}, headers=headers).json()
+    assert first["problem_id"] not in {p["problem_id"] for p in past["active"]}
     live = api.get("/api/lines/L1/live", params={"at": moment}, headers=headers).json()
     assert live["latest_event_at"] <= first["at"]
+
+
+def test_queue_is_about_the_present_and_past_shows_what_was_open(api):
+    headers = login(api, "controller")
+    now = api.get("/api/lines/L1/problems", headers=headers).json()
+    resolved = now["resolved"]
+    assert resolved, "в демонстрационной базе есть решённые проблемы"
+    problem = resolved[-1]
+    moment = datetime.fromisoformat(problem["resolved_at"]).timestamp() - 1
+    at = datetime.fromtimestamp(moment, UTC).isoformat()
+    past = api.get("/api/lines/L1/problems", params={"at": at}, headers=headers).json()
+    then = {p["problem_id"]: p for p in past["active"]}
+    assert then[problem["problem_id"]]["resolved_now"] is True
+    live = api.get("/api/lines/L1/live", params={"at": at}, headers=headers).json()
+    faded = sum(
+        n["problems"]["nonconformance_resolved"] + n["problems"]["not_assessable_resolved"]
+        for n in live["nodes"]
+    )
+    assert faded == sum(1 for p in past["active"] if p["resolved_now"])
+    assert all(p["kind"] in {"nonconformance", "not_assessable"} for p in now["active"])
+
+
+def test_not_assessable_is_a_problem_but_not_a_nonconformance(api):
+    headers = login(api, "controller")
+    data = api.get("/api/lines/L1/problems", headers=headers).json()
+    unclear = [p for p in data["active"] + data["resolved"] if p["kind"] == "not_assessable"]
+    assert unclear, "эмулятор даёт недостоверные наблюдения"
+    cards = {c["nc_id"] for c in api.get("/api/nonconformances", headers=headers).json()}
+    assert not {p["problem_id"] for p in unclear} & cards
+
+
+def test_item_visits_separate_the_problem_pass_from_the_repeat(api):
+    headers = login(api, "controller")
+    data = api.get("/api/lines/L1/problems", headers=headers).json()
+    nc = next(p for p in data["resolved"] if p["kind"] == "nonconformance")
+    path = api.get(f"/api/items/{nc['item_id']}/path", headers=headers).json()
+    labels = [visit["label"] for visit in path["visits"]]
+    assert "defect" in labels
+    assert labels.index("defect") < len(labels) - 1, "после дефекта есть повторный проход"
 
 
 def test_plant_overview_lists_lines_and_products(api):
@@ -431,10 +526,11 @@ def test_plant_overview_lists_lines_and_products(api):
     assert products["UNIT-U1"] == ["L1"]
 
 
-def test_live_view_counts_statuses_per_stage(api):
+def test_live_view_counts_every_item_that_passed_a_stage(api):
     live = api.get("/api/lines/L1/live", headers=login(api, "master")).json()
-    total = sum(sum(node["counts"].values()) for node in live["nodes"])
-    assert total + sum(live["entry_counts"].values()) == len(live["items"])
+    for node in live["nodes"]:
+        assert sum(node["counts"].values()) == node["passed"]
+    assert max(node["passed"] for node in live["nodes"]) > 0
 
 
 def test_admin_sees_database_without_secrets(api):
@@ -445,7 +541,8 @@ def test_admin_sees_database_without_secrets(api):
     users = api.get("/api/admin/db", params={"table": "users"}, headers=headers).json()
     assert all("password_hash" not in row for row in users["rows"])
     roles = api.get("/api/admin/roles", headers=headers).json()
-    assert "decide" in roles["roles"]["controller"] and "decide" not in roles["roles"]["master"]
+    assert "decide" in roles["roles"]["controller"]["permissions"]
+    assert "decide" not in roles["roles"]["master"]["permissions"]
     assert any(
         row["code"] == "POROSITY" for row in api.get("/api/admin/defects", headers=headers).json()
     )

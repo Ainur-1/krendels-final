@@ -54,8 +54,13 @@
 | `POST /api/lines/{id}/runs` | `emulate` | прогон на существующей линии по данным контракта: изделия, время показа, вероятности по этапам, принудительные дефекты |
 | `GET /api/admin/db[?table=]` | `admin` | таблицы базы с числом строк и последние строки; секреты и шифротекст не показываются |
 | `GET /api/admin/roles`, `GET /api/admin/defects` | `admin` | матрица прав, справочник дефектов |
-| `GET /api/admin/equipment` | `admin` | справочник станков: тип, обработка, дефекты, допуски параметров, где стоит, последнее состояние |
-| `POST /api/admin/equipment`, `PUT /api/admin/equipment/{id}` | `admin` | регистрация станка и изменение его паспорта, дефектов и допусков |
+| `GET /api/admin/equipment`, `GET /api/equipment` | `admin` / `equipment_manage` | справочник станков: тип, обработка, дефекты, допуски параметров, где стоит, последнее состояние |
+| `POST /api/equipment`, `PUT /api/equipment/{id}` | `equipment_manage` | регистрация конкретного станка по типу и изменение его паспорта, дефектов и допусков (технолог) |
+| `GET /api/admin/machine-types`, `POST /api/admin/machine-types`, `PUT /api/admin/machine-types/{key}` | `admin` | типы станков: обработка, виды дефектов, параметры режима с единицами и допусками |
+| `POST /api/admin/defects`, `PUT /api/admin/defects/{code}` | `admin` | виды дефектов: название и метод оценки |
+| `POST /api/admin/roles`, `PUT /api/admin/roles/{code}` | `admin` | роли: название, экран, права |
+| `POST /api/admin/users`, `PUT /api/admin/users/{id}` | `admin` | пользователи: имя, роль, пароль, активность |
+| `GET /api/lines/{id}/problems[?at]` | `read` | проблемы линии: несоответствия и «оценка невозможна». Без `at` — очередь на настоящий момент, с `at` — проблемы на тот момент с признаком «решена к настоящему» |
 | `GET /api/catalog` | `read` | справочники для редактора линии: виды дефектов, типы станков, станки |
 | `GET /emulator` | — | страница пульта эмулятора |
 

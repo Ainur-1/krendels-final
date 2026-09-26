@@ -16,6 +16,7 @@ from datetime import datetime
 from statistics import median
 
 from zero_defect.history.projection import MACHINE_DEVIATIONS, Observation, Run, shift_for
+from zero_defect.lines.catalog import title_of
 from zero_defect.lines.model import LineConfig, Node
 from zero_defect.quality.nonconformance import CONFIRMED_STATUSES
 from zero_defect.service import State
@@ -429,7 +430,95 @@ def item_path(index: LineIndex, item_id: str, state: State) -> dict | None:
         "parent_id": item.parent_id,
         "components": item.components,
         "route": nodes,
+        "visits": _visits(index, nodes, related_cards),
     }
+
+
+def _visits(index: LineIndex, nodes: list[dict], cards: list) -> list[dict]:
+    """
+    Маршрут изделия в хронологии: каждое прохождение этапа — отдельный шаг.
+
+    Проблемный проход и повторный проход того же этапа показываются раздельно: если
+    дефект мог возникнуть на B, а обнаружен на D, цепочка выглядит как B (мог возникнуть)
+    → C (мог возникнуть) → D (дефект) → B (доработка) → C (успешно). Этапы, которые
+    изделие ещё не прошло, идут в конце.
+    """
+
+    visits = []
+    for entry in nodes:
+        for run in entry["runs"]:
+            visits.append(
+                {
+                    "node_id": entry["node_id"],
+                    "title": entry["title"],
+                    "kind": "operation",
+                    "at": run["started_at"],
+                    "rework": run["rework"],
+                    "state": run["status"],
+                    "event_id": None,
+                    "result": None,
+                }
+            )
+        for check in entry["checks"]:
+            visits.append(
+                {
+                    "node_id": entry["node_id"],
+                    "title": entry["title"],
+                    "kind": "inspection",
+                    "at": check["at"],
+                    "rework": False,
+                    "state": None,
+                    "event_id": check["event_id"],
+                    "result": check["result"],
+                }
+            )
+    visits = [visit for visit in visits if visit["at"]]
+    visits.sort(key=lambda visit: datetime.fromisoformat(visit["at"]))
+    detected_first = None
+    marks: dict[int, str] = {}
+    for card in cards:
+        moment = card.first_detected_at
+        detected_first = moment if detected_first is None else min(detected_first, moment)
+        for position, visit in enumerate(visits):
+            if visit["event_id"] == card.first_signal.event_id:
+                marks[position] = "defect"
+        origin_nodes, strong = index.origins.get(card.nc_id, ([], False))
+        for origin in origin_nodes:
+            before = [
+                position
+                for position, visit in enumerate(visits)
+                if visit["node_id"] == origin and datetime.fromisoformat(visit["at"]) < moment
+            ]
+            if before and marks.get(before[-1]) != "defect":
+                marks[before[-1]] = "origin" if strong else "possible_origin"
+    for position, visit in enumerate(visits):
+        if position in marks:
+            visit["label"] = marks[position]
+        elif visit["result"] == "not_assessable":
+            visit["label"] = "not_assessable"
+        elif visit["result"] == "defect_signs_found":
+            visit["label"] = "defect"
+        elif visit["state"] == "in_progress":
+            visit["label"] = "processing"
+        elif visit["rework"]:
+            visit["label"] = "rework"
+        elif detected_first and datetime.fromisoformat(visit["at"]) > detected_first:
+            visit["label"] = "ok"
+        else:
+            visit["label"] = "passed"
+    seen = {visit["node_id"] for visit in visits}
+    for entry in nodes:
+        if entry["node_id"] not in seen:
+            visits.append(
+                {
+                    "node_id": entry["node_id"],
+                    "title": entry["title"],
+                    "kind": entry["kind"],
+                    "at": None,
+                    "label": "pending",
+                }
+            )
+    return visits
 
 
 def _line_events(index: LineIndex, state: State) -> list:
@@ -441,7 +530,101 @@ def _line_events(index: LineIndex, state: State) -> list:
     ]
 
 
-def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
+# Несоответствие перестаёт быть проблемой, когда его закрыли после устранения или
+# отклонили как ложный сигнал. Подтверждённое, но не закрытое остаётся проблемой.
+RESOLVING_ACTIONS = {"close": "closed", "reject": "rejected"}
+
+
+def line_problems(index: LineIndex, state: State) -> list[dict]:
+    """
+    Проблемы линии на момент состояния: несоответствия и наблюдения «оценка невозможна».
+
+    Несоответствие — это брак или его признак, по нему принимает решение контролёр.
+    «Оценка невозможна» браком не является (постановка не разрешает считать плохой
+    снимок ни годностью, ни браком), но это тоже проблема: изделие нужно проверить ещё
+    раз. Она решается следующим достоверным наблюдением того же изделия. Одна проблема —
+    одна запись: у несоответствия это место обнаружения, а не каждый возможный этап
+    возникновения.
+    """
+
+    problems = []
+    for nc, node_id in index.detected_at.items():
+        card = state.cards[nc]
+        resolved_at, resolution = None, None
+        if card.status in RESOLVING_ACTIONS.values():
+            for decision in reversed(card.decisions):
+                if RESOLVING_ACTIONS.get(decision.action) == card.status:
+                    resolved_at, resolution = decision.decided_at, card.status
+                    break
+        problems.append(
+            {
+                "problem_id": nc,
+                "kind": "nonconformance",
+                "item_id": card.item_id,
+                "node_id": node_id,
+                "at": card.first_detected_at,
+                "defect_type": card.defect_type,
+                "title": title_of(card.defect_type),
+                "severity": card.severity or "major",
+                "status": card.status,
+                "resolved_at": resolved_at,
+                "resolution": resolution,
+                "note": None,
+            }
+        )
+    for node_id, observations in index.observations.items():
+        for obs in observations:
+            if obs.effective_result != "not_assessable":
+                continue
+            item = state.history.items.get(obs.event.item_id)
+            later = [
+                other
+                for other in (item.observations if item else [])
+                if other.reliable and other.occurred_at > obs.occurred_at
+            ]
+            resolved = min(later, key=lambda other: other.occurred_at) if later else None
+            problems.append(
+                {
+                    "problem_id": f"NA-{obs.event.event_id}",
+                    "kind": "not_assessable",
+                    "item_id": obs.event.item_id,
+                    "node_id": node_id,
+                    "at": obs.occurred_at,
+                    "defect_type": None,
+                    "title": "Оценка невозможна",
+                    "severity": None,
+                    "status": "resolved" if resolved else "open",
+                    "resolved_at": resolved.occurred_at if resolved else None,
+                    "resolution": "rechecked" if resolved else None,
+                    "note": obs.reliability_note,
+                }
+            )
+    return problems
+
+
+def problem_payload(problem: dict) -> dict:
+    return {
+        **problem,
+        "at": problem["at"].isoformat(),
+        "resolved_at": problem["resolved_at"].isoformat() if problem["resolved_at"] else None,
+    }
+
+
+def passed_items(index: LineIndex, node: Node) -> set[str]:
+    """Изделия, прошедшие этап: у операции — по выполнениям, у контроля — по наблюдениям."""
+
+    items = {run.item_id for run in index.runs.get(node.node_id, [])}
+    items |= {obs.event.item_id for obs in index.observations.get(node.node_id, [])}
+    items.discard(None)
+    return items
+
+
+def live_view(
+    index: LineIndex,
+    state: State,
+    window_s: float = 1800,
+    resolved_now: set[str] | None = None,
+) -> dict:
     """Состояние графа линии: этапы с тревогами, изделия и их статусы у каждого этапа.
 
     Изделие отнесено к этапу, на котором было в последний раз. У этапа считается, сколько
@@ -449,6 +632,10 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
     вереницу точек. Отдельный список изделий нужен, чтобы анимировать переход изделия
     от этапа к этапу. Состояние бывает и на прошедший момент: тогда state построен из
     событий до этого момента, и «сейчас» — это он.
+
+    У этапа — все изделия, которые через него прошли, по их статусу на этот момент, и
+    проблемы, открытые на этот момент. resolved_now — проблемы, решённые к настоящему:
+    при взгляде в прошлое они показываются отдельно, чтобы не отвлекать внимание.
     """
 
     config = index.config
@@ -484,8 +671,18 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 }
             )
             counts[node or "__entry"][status] += 1
+    resolved_now = resolved_now or set()
+    open_problems: dict[str, list[dict]] = defaultdict(list)
+    for problem in line_problems(index, state):
+        if problem["resolved_at"] is None:
+            open_problems[problem["node_id"]].append(problem)
     nodes = []
     for node in config.nodes:
+        passed = passed_items(index, node)
+        by_status = Counter(state.statuses.get(item_id) or "in_progress" for item_id in passed)
+        here = open_problems.get(node.node_id, [])
+        faded = [p for p in here if p["problem_id"] in resolved_now]
+        active = [p for p in here if p["problem_id"] not in resolved_now]
         detected = [nc for nc, where in index.detected_at.items() if where == node.node_id]
         open_here = [nc for nc in detected if state.cards[nc].is_open]
         originated = [nc for nc, (where, _) in index.origins.items() if node.node_id in where]
@@ -513,13 +710,22 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 "duration_s": node.duration_s,
                 "machine_state": machine_state,
                 "state": alarm,
-                "passed": len(index.runs.get(node.node_id, []))
-                + len(index.observations.get(node.node_id, [])),
+                "passed": len(passed),
+                "problems": {
+                    "nonconformance": sum(1 for p in active if p["kind"] == "nonconformance"),
+                    "not_assessable": sum(1 for p in active if p["kind"] == "not_assessable"),
+                    "nonconformance_resolved": sum(
+                        1 for p in faded if p["kind"] == "nonconformance"
+                    ),
+                    "not_assessable_resolved": sum(
+                        1 for p in faded if p["kind"] == "not_assessable"
+                    ),
+                },
                 "open_detections": len(open_here),
                 "detections": len(detected),
                 "originated": len(originated),
                 "open_originated": len(open_origin),
-                "counts": dict(counts.get(node.node_id, {})),
+                "counts": dict(by_status),
             }
         )
     alarms = sorted(
@@ -554,51 +760,61 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
 
 
 def timeline(index: LineIndex, state: State) -> dict:
-    """Границы шкалы времени и отметки на ней: обнаружения, решения, отклонения станков."""
+    """
+    Границы шкалы времени и отметки на ней, двумя дорожками.
+
+    Дорожка изделий: обнаружение проблемы (несоответствие или «оценка невозможна») и её
+    решение — закрытие после устранения, отклонение ложного сигнала, повторная достоверная
+    проверка. Изделий без проблем на шкале нет. Дорожка станков: выход режима за допуск и
+    возврат станка в работу после него.
+    """
 
     events = _line_events(index, state)
     if not events:
         return {"start": None, "end": None, "markers": []}
     markers = []
-    for nc, where in index.detected_at.items():
-        card = state.cards[nc]
-        markers.append(
-            {
-                "at": card.first_detected_at.isoformat(),
-                "kind": "detected",
-                "nc_id": nc,
-                "node_id": where,
-                "item_id": card.item_id,
-                "defect_type": card.defect_type,
-                "status": card.status,
-            }
-        )
-        for decision in card.decisions:
+    for problem in line_problems(index, state):
+        base = {
+            "lane": "items",
+            "problem_id": problem["problem_id"],
+            "problem_kind": problem["kind"],
+            "node_id": problem["node_id"],
+            "item_id": problem["item_id"],
+            "title": problem["title"],
+            "severity": problem["severity"],
+        }
+        markers.append({**base, "at": problem["at"].isoformat(), "kind": "problem"})
+        if problem["resolved_at"]:
             markers.append(
                 {
-                    "at": decision.decided_at.isoformat(),
-                    "kind": "decision",
-                    "nc_id": nc,
-                    "node_id": where,
-                    "action": decision.action,
+                    **base,
+                    "at": problem["resolved_at"].isoformat(),
+                    "kind": "resolved",
+                    "resolution": problem["resolution"],
                 }
             )
     for node in index.config.nodes:
+        faulty = False
         for event in state.history.machine_events.get(node.equipment_id or "", []):
-            if event.machine_state in MACHINE_DEVIATIONS:
+            fault = event.machine_state in MACHINE_DEVIATIONS
+            if fault or (faulty and event.machine_state == "running"):
                 markers.append(
                     {
+                        "lane": "machines",
                         "at": event.occurred_at.isoformat(),
-                        "kind": "deviation",
+                        "kind": "machine_fault" if fault else "machine_ok",
                         "node_id": node.node_id,
                         "equipment_id": node.equipment_id,
+                        "machine_state": event.machine_state,
+                        "message": event.message,
                     }
                 )
+            faulty = fault
     markers.sort(key=lambda marker: marker["at"])
     return {
         "start": events[0].occurred_at.isoformat(),
         "end": events[-1].occurred_at.isoformat(),
-        "markers": markers[-400:],
+        "markers": markers[-800:],
     }
 
 

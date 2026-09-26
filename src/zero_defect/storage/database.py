@@ -109,6 +109,18 @@ equipment = Table(
     Column("updated_by", String(64), nullable=False),
 )
 
+# Справочники, которые ведёт администратор: виды дефектов, типы станков, роли. Запись —
+# один элемент справочника целиком; встроенные значения из кода — начальное наполнение.
+catalog = Table(
+    "catalog",
+    metadata,
+    Column("kind", String(32), primary_key=True),
+    Column("code", String(64), primary_key=True),
+    Column("config", Text, nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Column("updated_by", String(64), nullable=False),
+)
+
 # Номер рекомендательной блокировки PostgreSQL, под которой пишется журнал. Номер записи и
 # хеш предыдущей берутся атомарно и между процессами: два экземпляра сервиса на одной
 # базе не разветвят цепочку.

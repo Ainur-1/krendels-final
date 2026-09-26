@@ -31,8 +31,10 @@ from zero_defect.lines.views import (
     current_stage,
     economics,
     item_path,
+    line_problems,
     live_view,
     plant_card,
+    problem_payload,
     stage_items,
     stage_stats,
     stage_table,
@@ -457,7 +459,46 @@ def register(
     @app.get("/api/lines/{line_id}/live")
     def line_live(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
         index, state = cache.get(line_id, at)
-        return {**live_view(index, state), "emulation": emulator.status(line_id)}
+        return {
+            **live_view(index, state, resolved_now=_resolved_now(line_id) if at else None),
+            "emulation": emulator.status(line_id),
+        }
+
+    def _resolved_now(line_id: str) -> set[str]:
+        """Проблемы, решённые к настоящему моменту: в прошлом они показываются бледно."""
+
+        index, state = cache.get(line_id)
+        return {p["problem_id"] for p in line_problems(index, state) if p["resolved_at"]}
+
+    @app.get("/api/lines/{line_id}/problems")
+    def problems(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
+        """
+        Проблемы линии: активные и решённые. Без at — очередь контролёра, она всегда о
+        настоящем и не зависит от шкалы времени. С at — проблемы на тот момент, у каждой
+        отметка, решена ли она к настоящему.
+        """
+
+        index, state = cache.get(line_id, at)
+        found = line_problems(index, state)
+        done = _resolved_now(line_id) if at else set()
+        rank = {"critical": 0, "major": 1, "minor": 2}
+        active = sorted(
+            (p for p in found if p["resolved_at"] is None),
+            key=lambda p: (rank.get(p["severity"], 3), -p["at"].timestamp()),
+        )
+        resolved = sorted(
+            (p for p in found if p["resolved_at"] is not None),
+            key=lambda p: p["resolved_at"],
+            reverse=True,
+        )
+        return {
+            "at": at,
+            "active": [
+                {**problem_payload(p), "resolved_now": p["problem_id"] in done} for p in active
+            ],
+            "resolved": [problem_payload(p) for p in resolved[:40]],
+            "resolved_total": len(resolved),
+        }
 
     @app.get("/api/lines/{line_id}/stages")
     def stages(
@@ -790,7 +831,15 @@ def register(
     @app.get("/api/lines/{line_id}/timeline")
     def line_timeline(line_id: str, _: Principal = Depends(reader)) -> dict:
         index, state = cache.get(line_id)
-        return timeline(index, state)
+        settings = system.settings
+        return {
+            **timeline(index, state),
+            "window": {
+                "default": settings.default_window,
+                "shift_hours": settings.shift_hours,
+                "timezone_offset_h": settings.timezone.utcoffset(None).total_seconds() / 3600,
+            },
+        }
 
     @app.post("/api/lines/graph")
     def create_graph(spec: GraphSpec, user: Principal = Depends(manager)) -> dict:

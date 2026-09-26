@@ -20,23 +20,57 @@ from pathlib import Path
 
 from zero_defect.ledger.crypto import Keyring
 
-# Права ролей. Роли — из постановки; служебная роль edge нужна источникам событий.
+# Права ролей. Роли — из постановки; служебная роль edge нужна источникам событий. Это
+# начальное наполнение: администратор меняет права и заводит новые роли, и справочник
+# ролей в базе (security/roles.py) обновляет этот словарь на месте.
 PERMISSIONS: dict[str, frozenset[str]] = {
     "controller": frozenset({"read", "decide"}),
     "master": frozenset({"read", "emulate"}),
-    "technologist": frozenset({"read", "set_cause", "export"}),
+    # Технолог заводит конкретный станок по типу, который описал администратор.
+    "technologist": frozenset({"read", "set_cause", "export", "equipment_manage"}),
     # Руководитель производства — главная роль линии: создаёт линии и видит их экономику.
     "manager": frozenset({"read", "export", "line_manage", "emulate"}),
     "admin": frozenset(
-        {"read", "admin", "ingest", "export", "integrate", "line_manage", "emulate", "view_as"}
+        {
+            "read",
+            "admin",
+            "ingest",
+            "export",
+            "integrate",
+            "line_manage",
+            "emulate",
+            "view_as",
+            "equipment_manage",
+        }
     ),
     "edge": frozenset({"ingest"}),
 }
 
+# Название роли и экран, который она видит. Новая роль выбирает один из этих экранов.
+ROLE_META: dict[str, dict[str, str]] = {
+    "controller": {"title": "Контролёр ОТК", "screen": "controller"},
+    "master": {"title": "Мастер участка", "screen": "master"},
+    "technologist": {"title": "Технолог", "screen": "technologist"},
+    "manager": {"title": "Руководитель производства", "screen": "manager"},
+    "admin": {"title": "Администратор", "screen": "admin"},
+    "edge": {"title": "Источник событий", "screen": "none"},
+}
+SCREENS = ("controller", "master", "technologist", "manager", "admin")
+
 # Действия, которые записываются в журнал критических действий. Чтение не пишется:
 # журнал, в котором тонут решения, никто не читает.
 CRITICAL = frozenset(
-    {"decide", "set_cause", "admin", "integrate", "login", "denied", "line_manage", "emulate"}
+    {
+        "decide",
+        "set_cause",
+        "admin",
+        "integrate",
+        "login",
+        "denied",
+        "line_manage",
+        "emulate",
+        "equipment_manage",
+    }
 )
 
 

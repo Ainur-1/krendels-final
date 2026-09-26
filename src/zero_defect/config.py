@@ -78,6 +78,9 @@ class Settings:
     integrations: tuple[str, ...] = ()
     adapters: dict[str, AdapterSettings] = field(default_factory=dict)
     users_path: Path = CONFIG_DIR / "users.toml"
+    # Промежуток шкалы времени по умолчанию и длина смены для переключателя на шкале.
+    default_window: str = "day"
+    shift_hours: float = 8.0
 
 
 def _env(section: str, key: str) -> str | None:
@@ -153,6 +156,8 @@ def load_settings(path: Path | None = None, **overrides: object) -> Settings:
         "timezone": timezone(timedelta(hours=float(shifts_raw.get("timezone_offset_h", 3)))),
         "integrations": enabled,
         "adapters": adapters,
+        "default_window": str(pick("interface", "default_window", "day")),
+        "shift_hours": float(pick("interface", "shift_hours", 8, float)),
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
