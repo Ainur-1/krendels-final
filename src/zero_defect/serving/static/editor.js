@@ -4,7 +4,7 @@
 // цикл, связь в никуда, незарегистрированный станок или чужой для станка дефект не
 // сохранятся. Станки берутся только из справочника оборудования: новый станок заводит
 // администратор. Экономика линии задаётся в одном месте — кнопкой «Экономика» на линии.
-import { api, esc, marquee, modal, notify, picker } from "./common.js?v=0.5.1";
+import { api, esc, marquee, modal, notify, picker } from "./common.js?v=0.5.3";
 
 const BLOCK_W = 170, BLOCK_H = 74;
 const KINDS = {

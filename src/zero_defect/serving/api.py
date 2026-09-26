@@ -294,6 +294,20 @@ def create_app(
         card = system.state().cards[nc_id]
         return {"decision": decision.as_dict(), "card": payloads.nc_card(card, system, user)}
 
+    @app.post("/api/unassessable/{problem_id}/decisions")
+    def decide_unassessable(
+        problem_id: str, request: DecisionRequest, user: Principal = Depends(principal)
+    ) -> dict:
+        """Решение по «оценка невозможна»: повторный контроль или допуск по ручному контролю."""
+
+        try:
+            decision = system.decide_unassessable(user, problem_id, request.action, request.reason)
+        except DecisionError as error:
+            raise HTTPException(409, str(error)) from error
+        # Свежий снимок сразу после решения: следующий опрос интерфейса уже видит его.
+        system.state()
+        return {"decision": decision.as_dict()}
+
     @app.get("/api/metrics")
     def metrics(_: Principal = Depends(reader)) -> dict:
         return {**system.snapshot().metrics, "ingest": system.ingest_summary()}

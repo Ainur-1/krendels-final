@@ -24,6 +24,7 @@
 | `GET /api/nonconformances[?status=]` | `read` | карточки |
 | `GET /api/nonconformances/{id}` | `read` | карточка: исходные сообщения как пришли, разбор системы, решения, материалы, допустимые действия текущего пользователя |
 | `POST /api/nonconformances/{id}/decisions` | `decide` или `set_cause` | решение: `start_review`, `request_recheck`, `confirm`, `reject`, `close`, `reopen`, `confirm_cause` (+ `cause_category`); обоснование обязательно |
+| `POST /api/unassessable/{id}/decisions` | `decide_unassessable` | решение по «оценка невозможна»: `request_recheck` (повторный контроль) или `accept_manual` (допуск по ручному контролю); обоснование обязательно |
 | `GET /api/metrics` | `read` | производственная аналитика и сводка приёма |
 | `GET /api/quarantine` | `read` | отклонённые сообщения с ошибками |
 | `GET /api/integrity` | `admin` | проверка цепочки, подписей и якоря |
@@ -60,7 +61,7 @@
 | `POST /api/admin/defects`, `PUT /api/admin/defects/{code}` | `admin` | виды дефектов: название и метод оценки |
 | `POST /api/admin/roles`, `PUT /api/admin/roles/{code}` | `admin` | роли: название, экран, права |
 | `POST /api/admin/users`, `PUT /api/admin/users/{id}` | `admin` | пользователи: имя, роль, пароль, активность |
-| `GET /api/lines/{id}/problems[?at&since&node&item&lane]` | `read` | проблемы линии: действующие и решённые. `lane=items` (по умолчанию) — несоответствия и «оценка невозможна», `lane=machines` — сбои станков. Без `at` — на настоящий момент, с `at` — на тот момент с признаком «решена к настоящему». `node` и `item` сужают список до этапа или изделия, `since` оставляет решённые внутри промежутка |
+| `GET /api/lines/{id}/problems[?at&since&node&item&problem&lane]` | `read` | проблемы линии: действующие и решённые. `lane=items` (по умолчанию) — несоответствия и «оценка невозможна», `lane=machines` — сбои станков. Без `at` — на настоящий момент, с `at` — на тот момент с признаком «решена к настоящему». `node`, `item` и `problem` сужают список до этапа, изделия или одной проблемы, `since` оставляет решённые внутри промежутка |
 | `GET /api/catalog` | `read` | справочники для редактора линии: виды дефектов, типы станков, станки |
 | `GET /emulator` | — | страница пульта эмулятора |
 

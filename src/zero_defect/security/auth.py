@@ -24,8 +24,10 @@ from zero_defect.ledger.crypto import Keyring
 # начальное наполнение: администратор меняет права и заводит новые роли, и справочник
 # ролей в базе (security/roles.py) обновляет этот словарь на месте.
 PERMISSIONS: dict[str, frozenset[str]] = {
-    "controller": frozenset({"read", "decide"}),
-    "master": frozenset({"read", "emulate"}),
+    # Решение по «оценка невозможна» — повторный контроль или допуск по ручному контролю —
+    # принимают контролёр ОТК и мастер участка: изделие стоит у мастера на участке.
+    "controller": frozenset({"read", "decide", "decide_unassessable"}),
+    "master": frozenset({"read", "emulate", "decide_unassessable"}),
     # Технолог заводит конкретный станок по типу, который описал администратор.
     "technologist": frozenset({"read", "set_cause", "export", "equipment_manage"}),
     # Руководитель производства — главная роль линии: создаёт линии и видит их экономику.
@@ -62,6 +64,7 @@ SCREENS = ("controller", "master", "technologist", "manager", "admin")
 CRITICAL = frozenset(
     {
         "decide",
+        "decide_unassessable",
         "set_cause",
         "admin",
         "integrate",

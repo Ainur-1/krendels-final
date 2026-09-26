@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from zero_defect.analysis.causes import assess
 from zero_defect.analysis.metrics import compute
 from zero_defect.config import Settings, resolve_storage_url
-from zero_defect.history.projection import History, build_history
+from zero_defect.history.projection import History, Observation, build_history
 from zero_defect.ingest.pipeline import Delivery, DeliveryResult, IngestPipeline, payload_hash
 from zero_defect.ingest.validation import parse_event
 from zero_defect.ledger.crypto import PROFILES, Keyring
@@ -27,6 +27,8 @@ from zero_defect.ledger.store import IntegrityReport, Ledger
 from zero_defect.observability import InMemoryTelemetry, Telemetry
 from zero_defect.quality.nonconformance import (
     CAUSE_ACTION,
+    UNASSESSABLE_ACTIONS,
+    UNASSESSABLE_PREFIX,
     Decision,
     Nonconformance,
     build_nonconformances,
@@ -60,6 +62,8 @@ class State:
     quarantine: list[dict] = field(default_factory=list)
     unreadable: list[dict] = field(default_factory=list)
     duplicates: int = 0
+    # Решения людей по наблюдениям «оценка невозможна»: ключ — NA-<event_id>.
+    unassessable_decisions: dict[str, list[Decision]] = field(default_factory=dict)
 
 
 class QualitySystem:
@@ -96,8 +100,12 @@ class QualitySystem:
         self._state_version = -1
         self._state_built = 0.0
         self._build_lock = threading.Lock()
-        self._moments: dict[str, State] = {}
-        self._moments_version = -1
+        self._refreshing = False
+        # Состояния на прошедшие моменты: ключ — момент с точностью до секунды. Новое
+        # событие или решение сбрасывает только моменты не раньше себя: эмуляция пишет
+        # события «сейчас», и прошлое от них не меняется.
+        self._moments: dict[str, tuple[datetime, State]] = {}
+        self._moments_building: dict[str, threading.Event] = {}
         self._lock = threading.RLock()
         self._load()
 
@@ -167,6 +175,7 @@ class QualitySystem:
                     self._duplicates += 1
             if accepted:
                 self._version += 1
+                self._forget_moments(min(event.occurred_at for event in accepted))
         if accepted:
             self._notify("events", {"count": len(accepted)})
         return results
@@ -211,7 +220,57 @@ class QualitySystem:
             decision = replace(decision, ledger_seq=header.seq)
             self._decisions.append(decision)
             self._version += 1
+            self._forget_moments(decision.decided_at)
         self._notify("decision", {"decision": decision, "item_id": card.item_id})
+        return decision
+
+    def decide_unassessable(
+        self,
+        principal: Principal,
+        problem_id: str,
+        action: str,
+        reason: str,
+        decided_at: datetime | None = None,
+    ) -> Decision:
+        """
+        Решение по наблюдению «оценка невозможна»: повторный контроль или допуск по
+        ручному контролю. Пишется той же записью журнала, что и решение по несоответствию,
+        с идентификатором проблемы вместо номера карточки.
+        """
+
+        self.security.authorize(
+            principal, "decide_unassessable", "decide", {"problem_id": problem_id, "action": action}
+        )
+        if action not in UNASSESSABLE_ACTIONS:
+            raise DecisionError(f"неизвестное действие {action!r}")
+        if not reason or not reason.strip():
+            raise DecisionError("решение без обоснования не принимается")
+        event_id = problem_id.removeprefix(UNASSESSABLE_PREFIX)
+        with self._lock:
+            state = self.state()
+            found = unassessable_observation(state, event_id)
+            if found is None:
+                raise DecisionError(f"наблюдение {problem_id} с оценкой «невозможна» не найдено")
+            if unassessable_resolution(state, found)[0] is not None:
+                raise DecisionError("проблема уже решена")
+            decision = Decision(
+                decision_id=str(uuid.uuid4()),
+                nc_id=problem_id,
+                action=action,
+                author_id=principal.user_id,
+                author_role=principal.role,
+                reason=reason.strip(),
+                decided_at=decided_at or datetime.now(UTC),
+            )
+            header = self.ledger.append("decision", decision.as_dict(), ref_id=problem_id)
+            decision = replace(decision, ledger_seq=header.seq)
+            self._decisions.append(decision)
+            self._version += 1
+            self._forget_moments(decision.decided_at)
+        self._notify(
+            "decision",
+            {"decision": decision, "item_id": found.event.item_id, "event_id": event_id},
+        )
         return decision
 
     # --- аудит и защита ------------------------------------------------------------
@@ -288,9 +347,39 @@ class QualitySystem:
             return state
 
     def snapshot(self) -> State:
-        """Снимок для чтения интерфейсом: не старше секунды."""
+        """
+        Снимок для чтения интерфейсом: последний готовый, без ожидания пересборки.
 
-        return self.state(max_age=1.0)
+        Полная пересборка на демонстрационной базе занимает около 1,4 с, а пока идёт
+        эмуляция, события приходят каждую секунду. Опрос интерфейса, который ждал
+        пересборку, и давал лаги. Теперь устаревший снимок отдаётся сразу, а свежий строится
+        в фоне и подменяет его. Решения людей читают state() — всегда по последним данным.
+        """
+
+        with self._lock:
+            current, stale = self._state, self._state_version != self._version
+        if current is None:
+            return self.state()
+        # Пересборка не чаще раза в секунду: события эмуляции идут чаще, и непрерывная
+        # пересборка в фоне отнимала процессор у запросов.
+        if stale and time.monotonic() - self._state_built >= 1.0:
+            self._refresh_in_background()
+        return current
+
+    def _refresh_in_background(self) -> None:
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+
+        def run() -> None:
+            try:
+                self.state()
+            finally:
+                with self._lock:
+                    self._refreshing = False
+
+        threading.Thread(target=run, name="state-refresh", daemon=True).start()
 
     def state_at(self, moment: datetime) -> State:
         """Состояние системы на момент времени: события и решения, случившиеся до него.
@@ -301,28 +390,60 @@ class QualitySystem:
         """
 
         key = moment.isoformat(timespec="seconds")
-        with self._lock:
-            if self._moments_version != self._version:
-                self._moments, self._moments_version = {}, self._version
-            cached = self._moments.get(key)
-            if cached is not None:
-                return cached
-            events = [event for event in self._events if event.occurred_at <= moment]
-            decisions = [item for item in self._decisions if item.decided_at <= moment]
-        state = self._build(events, decisions)
-        with self._lock:
-            # Шкалу времени двигают рывками, поэтому помнится дюжина последних моментов.
-            if len(self._moments) >= 12:
-                self._moments.pop(next(iter(self._moments)))
-            self._moments[key] = state
+        while True:
+            with self._lock:
+                cached = self._moments.get(key)
+                if cached is not None:
+                    return cached[1]
+                # Один момент строится один раз: переход в прошлое порождает сразу
+                # несколько запросов на тот же момент, и параллельные пересборки по 1,4 с
+                # мешали друг другу.
+                building = self._moments_building.get(key)
+                if building is None:
+                    building = self._moments_building[key] = threading.Event()
+                    events = [event for event in self._events if event.occurred_at <= moment]
+                    decisions = [item for item in self._decisions if item.decided_at <= moment]
+                    break
+            building.wait()
+        try:
+            state = self._build(events, decisions)
+            with self._lock:
+                # Шкалу времени двигают рывками, поэтому помнится дюжина последних моментов.
+                if len(self._moments) >= 12:
+                    self._moments.pop(next(iter(self._moments)))
+                self._moments[key] = (moment, state)
+        finally:
+            with self._lock:
+                self._moments_building.pop(key, None)
+            building.set()
         return state
+
+    def _forget_moments(self, since: datetime) -> None:
+        """Сбрасывает состояния на моменты, которые новое событие или решение меняет."""
+
+        self._moments = {key: value for key, value in self._moments.items() if value[0] < since}
 
     def _build(self, events: list, decisions: list[Decision]) -> State:
         history = build_history(events, self.settings)
+        unclear: dict[str, list[Decision]] = {}
+        for decision in sorted(decisions, key=lambda item: (item.decided_at, item.ledger_seq)):
+            if decision.nc_id.startswith(UNASSESSABLE_PREFIX):
+                unclear.setdefault(decision.nc_id, []).append(decision)
         cards = build_nonconformances(history, decisions)
         for card in cards.values():
             card.assessment = assess(card, history, self.settings).as_dict()
-        statuses = {item_id: item_status(item_id, history, cards) for item_id in history.items}
+        accepted = frozenset(
+            problem_id.removeprefix(UNASSESSABLE_PREFIX)
+            for problem_id, made in unclear.items()
+            if any(item.action == "accept_manual" for item in made)
+        )
+        by_item: dict[str, list[Nonconformance]] = {}
+        for card in cards.values():
+            by_item.setdefault(card.item_id, []).append(card)
+        statuses = {
+            item_id: item_status(item_id, history, cards, accepted, by_item)
+            for item_id in history.items
+        }
         return State(
             history=history,
             cards=cards,
@@ -331,6 +452,7 @@ class QualitySystem:
             quarantine=list(self._quarantine),
             unreadable=list(self._unreadable),
             duplicates=self._duplicates,
+            unassessable_decisions=unclear,
         )
 
     def raw_event(self, event_id: str) -> dict | None:
@@ -368,3 +490,36 @@ def _decision_from(payload: dict, seq: int) -> Decision:
         cause_category=payload.get("cause_category"),
         ledger_seq=seq,
     )
+
+
+def unassessable_observation(state: State, event_id: str) -> Observation | None:
+    """Наблюдение «оценка невозможна» по номеру события."""
+
+    for observation in state.history.observations:
+        if (
+            observation.event.event_id == event_id
+            and observation.effective_result == "not_assessable"
+        ):
+            return observation
+    return None
+
+
+def unassessable_resolution(
+    state: State, observation: Observation
+) -> tuple[datetime | None, str | None]:
+    """
+    Когда и чем решена проблема «оценка невозможна»: допуском по ручному контролю или
+    следующим достоверным наблюдением того же изделия — что случилось раньше.
+    """
+
+    made = state.unassessable_decisions.get(UNASSESSABLE_PREFIX + observation.event.event_id, [])
+    options = [
+        (item.decided_at, "accepted_manual") for item in made if item.action == "accept_manual"
+    ]
+    item = state.history.items.get(observation.event.item_id)
+    options += [
+        (other.occurred_at, "rechecked")
+        for other in (item.observations if item else [])
+        if other.reliable and other.occurred_at > observation.occurred_at
+    ]
+    return min(options, default=(None, None))

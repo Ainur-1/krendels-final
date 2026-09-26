@@ -19,7 +19,7 @@ from zero_defect.history.projection import MACHINE_DEVIATIONS, Observation, Run,
 from zero_defect.lines.catalog import title_of
 from zero_defect.lines.model import LineConfig, Node
 from zero_defect.quality.nonconformance import CONFIRMED_STATUSES
-from zero_defect.service import State
+from zero_defect.service import State, unassessable_resolution
 
 STATUS_ORDER = (
     "pending",
@@ -57,7 +57,9 @@ class LineIndex:
     run_node: dict[str, str] = field(default_factory=dict)
 
 
-def _item_line(item_id: str, history) -> str | None:
+def item_line(item_id: str, history) -> str | None:
+    """Линия изделия: своя или линия изделия, в которое оно собрано."""
+
     seen = set()
     current = history.items.get(item_id)
     while current is not None and item_id not in seen:
@@ -72,10 +74,10 @@ def _item_line(item_id: str, history) -> str | None:
 def build_index(config: LineConfig, state: State) -> LineIndex:
     history = state.history
     item_types = {item_id: item.item_type_id for item_id, item in history.items.items()}
-    item_line = {item_id: _item_line(item_id, history) for item_id in history.items}
-    index = LineIndex(config, item_types, item_line)
+    lines_of = {item_id: item_line(item_id, history) for item_id in history.items}
+    index = LineIndex(config, item_types, lines_of)
     for run in history.runs.values():
-        line = run.line_id or item_line.get(run.item_id)
+        line = run.line_id or lines_of.get(run.item_id)
         if line != config.line_id:
             continue
         node = config.operation_node(run.station_id, run.operation_id)
@@ -84,14 +86,14 @@ def build_index(config: LineConfig, state: State) -> LineIndex:
             index.run_node[run.run_id] = node.node_id
     for observation in history.observations:
         event = observation.event
-        if (event.line_id or item_line.get(event.item_id)) != config.line_id:
+        if (event.line_id or lines_of.get(event.item_id)) != config.line_id:
             continue
         node = config.inspection_node(event.checkpoint_id, item_types.get(event.item_id))
         if node is not None:
             index.observations[node.node_id].append(observation)
     for card in state.cards.values():
         event = card.first_signal.observation.event
-        if (event.line_id or item_line.get(card.item_id)) != config.line_id:
+        if (event.line_id or lines_of.get(card.item_id)) != config.line_id:
             continue
         node = config.inspection_node(event.checkpoint_id, item_types.get(event.item_id))
         if node is not None:
@@ -476,12 +478,20 @@ def _visits(index: LineIndex, nodes: list[dict], cards: list) -> list[dict]:
     visits.sort(key=lambda visit: datetime.fromisoformat(visit["at"]))
     detected_first = None
     marks: dict[int, str] = {}
+    # Шаг ведёт к своей проблеме: интерфейс по нажатию на шаг открывает её, а не этап.
+    # Одно наблюдение может сообщить несколько дефектов — у шага тогда несколько проблем.
+    problems: dict[int, list[str]] = defaultdict(list)
+    signal_cards: dict[str, list[str]] = defaultdict(list)
+    for card in cards:
+        for signal in card.signals:
+            signal_cards[signal.event_id].append(card.nc_id)
     for card in cards:
         moment = card.first_detected_at
         detected_first = moment if detected_first is None else min(detected_first, moment)
         for position, visit in enumerate(visits):
             if visit["event_id"] == card.first_signal.event_id:
                 marks[position] = "defect"
+                problems[position].append(card.nc_id)
         origin_nodes, strong = index.origins.get(card.nc_id, ([], False))
         for origin in origin_nodes:
             before = [
@@ -491,7 +501,13 @@ def _visits(index: LineIndex, nodes: list[dict], cards: list) -> list[dict]:
             ]
             if before and marks.get(before[-1]) != "defect":
                 marks[before[-1]] = "origin" if strong else "possible_origin"
+                problems[before[-1]].append(card.nc_id)
     for position, visit in enumerate(visits):
+        linked = problems.get(position) or signal_cards.get(visit["event_id"]) or []
+        if visit["result"] == "not_assessable" and not linked:
+            linked = [f"NA-{visit['event_id']}"]
+        visit["problem_ids"] = list(dict.fromkeys(linked))
+        visit["problem_id"] = visit["problem_ids"][0] if linked else None
         if position in marks:
             visit["label"] = marks[position]
         elif visit["result"] == "not_assessable":
@@ -516,6 +532,8 @@ def _visits(index: LineIndex, nodes: list[dict], cards: list) -> list[dict]:
                     "kind": entry["kind"],
                     "at": None,
                     "label": "pending",
+                    "problem_id": None,
+                    "problem_ids": [],
                 }
             )
     return visits
@@ -542,7 +560,8 @@ def line_problems(index: LineIndex, state: State) -> list[dict]:
     Несоответствие — это брак или его признак, по нему принимает решение контролёр.
     «Оценка невозможна» браком не является (постановка не разрешает считать плохой
     снимок ни годностью, ни браком), но это тоже проблема: изделие нужно проверить ещё
-    раз. Она решается следующим достоверным наблюдением того же изделия. Одна проблема —
+    раз. Она решается следующим достоверным наблюдением того же изделия или допуском по
+    ручному контролю — решением мастера или контролёра. Одна проблема —
     одна запись: у несоответствия это место обнаружения, а не каждый возможный этап
     возникновения.
     """
@@ -576,16 +595,15 @@ def line_problems(index: LineIndex, state: State) -> list[dict]:
         for obs in observations:
             if obs.effective_result != "not_assessable":
                 continue
-            item = state.history.items.get(obs.event.item_id)
-            later = [
-                other
-                for other in (item.observations if item else [])
-                if other.reliable and other.occurred_at > obs.occurred_at
-            ]
-            resolved = min(later, key=lambda other: other.occurred_at) if later else None
+            problem_id = f"NA-{obs.event.event_id}"
+            made = state.unassessable_decisions.get(problem_id, [])
+            resolved_at, resolution = unassessable_resolution(state, obs)
+            status = "resolved" if resolved_at else "open"
+            if not resolved_at and any(item.action == "request_recheck" for item in made):
+                status = "recheck_requested"
             problems.append(
                 {
-                    "problem_id": f"NA-{obs.event.event_id}",
+                    "problem_id": problem_id,
                     "kind": "not_assessable",
                     "item_id": obs.event.item_id,
                     "node_id": node_id,
@@ -593,10 +611,11 @@ def line_problems(index: LineIndex, state: State) -> list[dict]:
                     "defect_type": None,
                     "title": "Оценка невозможна",
                     "severity": None,
-                    "status": "resolved" if resolved else "open",
-                    "resolved_at": resolved.occurred_at if resolved else None,
-                    "resolution": "rechecked" if resolved else None,
+                    "status": status,
+                    "resolved_at": resolved_at,
+                    "resolution": resolution,
                     "note": obs.reliability_note,
+                    "decisions": [item.as_dict() for item in made],
                 }
             )
     return problems

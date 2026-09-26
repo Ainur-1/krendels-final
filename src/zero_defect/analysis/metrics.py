@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from statistics import mean, median
+from statistics import fmean, median
 
 from zero_defect.history.projection import History
 from zero_defect.quality.nonconformance import CONFIRMED_STATUSES, REJECTED, Nonconformance
@@ -21,7 +21,9 @@ def _stats(values: list[float]) -> dict:
         return {"count": 0, "mean_s": None, "median_s": None}
     return {
         "count": len(values),
-        "mean_s": round(mean(values), 1),
+        # fmean — в числах с плавающей точкой: mean по точным дробям был самым дорогим
+        # местом пересборки, а секундам с округлением до десятых точные дроби не нужны.
+        "mean_s": round(fmean(values), 1),
         "median_s": round(median(values), 1),
     }
 

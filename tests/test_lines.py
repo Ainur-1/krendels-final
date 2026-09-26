@@ -155,9 +155,9 @@ def test_flow_upload_runs_to_completion(api):
     now = time.time()
     for step in range(60):
         emulator.tick(now + step)
-    # Интерфейс читает снимок не старше секунды: пересборка на каждый опрос и давала
-    # лаги. Ждём, пока снимок, построенный до прогона, устареет.
-    time.sleep(1.1)
+    # Интерфейс читает последний готовый снимок, свежий строится в фоне. Тест не ждёт
+    # фоновую пересборку, а строит состояние сам.
+    api.app.state.system.state()
     status = api.get("/api/lines/DEMO/live", headers=headers).json()["emulation"]
     assert status["run"]["finished"] is True
     stages = {
@@ -516,6 +516,13 @@ def test_item_visits_separate_the_problem_pass_from_the_repeat(api):
     labels = [visit["label"] for visit in path["visits"]]
     assert "defect" in labels
     assert labels.index("defect") < len(labels) - 1, "после дефекта есть повторный проход"
+    linked = {
+        problem
+        for visit in path["visits"]
+        if visit["label"] == "defect"
+        for problem in visit["problem_ids"]
+    }
+    assert nc["problem_id"] in linked, "шаг с дефектом ведёт к своей проблеме"
 
 
 def test_plant_overview_lists_lines_and_products(api):
@@ -597,3 +604,73 @@ def test_admin_sees_database_without_secrets(api):
 def test_emulator_console_page_is_served(api):
     page = api.get("/emulator")
     assert page.status_code == 200 and "Пульт эмулятора" in page.text
+
+
+def _drain(api) -> None:
+    emulator = api.app.state.emulator
+    now = time.time()
+    for step in range(0, 7200, 30):
+        emulator.tick(now + step)
+    api.app.state.system.state()
+
+
+def test_master_decides_on_not_assessable(api):
+    master = login(api, "master")
+    open_ones = [
+        p
+        for p in api.get("/api/lines/L1/problems", headers=master).json()["active"]
+        if p["kind"] == "not_assessable"
+    ]
+    assert len(open_ones) >= 2, "в демонстрационной базе есть «оценка невозможна»"
+    first, second = open_ones[0], open_ones[1]
+    body = {"action": "accept_manual", "reason": "ручной осмотр, признаков нет"}
+    url = f"/api/unassessable/{first['problem_id']}/decisions"
+    assert api.post(url, json=body, headers=login(api, "technologist")).status_code == 403
+    assert api.post(url, json={**body, "reason": " "}, headers=master).status_code == 409
+    assert api.post(url, json=body, headers=master).status_code == 200
+    assert api.post(url, json=body, headers=master).status_code == 409, "уже решена"
+
+    recheck = {"action": "request_recheck", "reason": "снимок пересвечен"}
+    url = f"/api/unassessable/{second['problem_id']}/decisions"
+    assert api.post(url, json=recheck, headers=login(api, "controller")).status_code == 200
+    _drain(api)
+    done = {
+        p["problem_id"]: p
+        for p in api.get("/api/lines/L1/problems", headers=master).json()["resolved"]
+    }
+    assert done[first["problem_id"]]["resolution"] == "accepted_manual"
+    assert done[first["problem_id"]]["decisions"][0]["author_id"] == "master"
+    assert done[second["problem_id"]]["resolution"] == "rechecked", "эмулятор снял повторный снимок"
+
+
+def test_confirmed_defect_is_reworked_and_the_item_goes_on(api):
+    master, controller = login(api, "master"), login(api, "controller")
+    body = {
+        "items": 3,
+        "duration_s": 10,
+        "seed": 2,
+        "defect_rates_pct": {"L2-BEND": 0},
+        "defects": [{"item": 2, "node_id": "L2-BEND", "kind": "defect"}],
+    }
+    assert api.post("/api/lines/L2/runs", json=body, headers=master).status_code == 200
+    _drain(api)
+    held = [
+        p
+        for p in api.get("/api/lines/L2/problems", headers=controller).json()["active"]
+        if p["kind"] == "nonconformance" and p["node_id"] == "L2-QC" and "-002-" in p["item_id"]
+    ]
+    assert held, "дефект гибки обнаружен на контроле геометрии, изделие ждёт решения"
+    problem = held[0]
+    before = api.get(f"/api/items/{problem['item_id']}/path", headers=controller).json()
+    assert "rework" not in [visit["label"] for visit in before["visits"]]
+    decided = api.post(
+        f"/api/nonconformances/{problem['problem_id']}/decisions",
+        json={"action": "confirm", "reason": "трещина подтверждена осмотром"},
+        headers=controller,
+    )
+    assert decided.status_code == 200
+    _drain(api)
+    after = api.get(f"/api/items/{problem['item_id']}/path", headers=controller).json()
+    labels = [visit["label"] for visit in after["visits"]]
+    assert "rework" in labels, "после подтверждения — доработка на гибке"
+    assert labels.index("rework") < len(labels) - 1, "и путь дальше по линии"

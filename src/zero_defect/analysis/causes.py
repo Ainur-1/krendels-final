@@ -78,6 +78,28 @@ def _checkpoint(observation: Observation, settings: Settings) -> str:
     return f"{event.checkpoint_id} ({event.checkpoint_kind}) в {local:%d.%m %H:%M}"
 
 
+# Выборка по изделиям, а не проход по всей истории: разбор идёт по каждой карточке, и
+# полный проход делал пересборку квадратичной — на 20 тыс. событий и сотнях карточек она
+# занимала больше секунды.
+def _observations_of(history: History, scope: set[str]) -> list:
+    return [
+        obs
+        for item_id in scope
+        if item_id in history.items
+        for obs in history.items[item_id].observations
+    ]
+
+
+def _runs_of(history: History, scope: set[str]) -> list:
+    return [
+        history.runs[run_id]
+        for item_id in scope
+        if item_id in history.items
+        for run_id in history.items[item_id].run_ids
+        if run_id in history.runs
+    ]
+
+
 def assess(card: Nonconformance, history: History, settings: Settings) -> Assessment:
     first = card.first_signal.observation
     detected_at = first.occurred_at
@@ -99,8 +121,8 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
         )
         later_runs = [
             run
-            for run in history.runs.values()
-            if run.item_id == card.item_id and run.started_at and run.started_at > detected_at
+            for run in _runs_of(history, {card.item_id})
+            if run.started_at and run.started_at > detected_at
         ]
         if later_runs:
             result.evidence.append(
@@ -121,11 +143,7 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
 
     scope = {card.item_id, *history.ancestors(card.item_id)}
     prior = sorted(
-        (
-            obs
-            for obs in history.observations
-            if obs.event.item_id in scope and obs.occurred_at < detected_at
-        ),
+        (obs for obs in _observations_of(history, scope) if obs.occurred_at < detected_at),
         key=lambda obs: obs.occurred_at,
     )
     clean = [obs for obs in prior if obs.effective_result == "no_defect_signs" and obs.reliable]
@@ -137,8 +155,8 @@ def assess(card: Nonconformance, history: History, settings: Settings) -> Assess
     ]
     runs_before = [
         run
-        for run in history.runs.values()
-        if run.item_id in scope and run.started_at is not None and run.started_at < detected_at
+        for run in _runs_of(history, scope)
+        if run.started_at is not None and run.started_at < detected_at
     ]
     if boundary is not None:
         candidates = [

@@ -55,6 +55,13 @@ CAUSE_CATEGORIES = (
 
 SEVERITY_RANK = {None: 0, "minor": 1, "major": 2, "critical": 3}
 
+# Решения по наблюдению «оценка невозможна». Это не несоответствие, поэтому своих статусов
+# у него нет: человек либо назначает повторный контроль (проблему решит следующее
+# достоверное наблюдение), либо допускает изделие по ручному контролю. Автоматически
+# плохой снимок годностью не становится — годность здесь всегда решение человека.
+UNASSESSABLE_PREFIX = "NA-"
+UNASSESSABLE_ACTIONS = ("request_recheck", "accept_manual")
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -235,11 +242,26 @@ def recheck_outcome(card: Nonconformance, history: History) -> str | None:
     return "повторная проверка ещё не проводилась"
 
 
-def item_status(item_id: str, history: History, cards: dict[str, Nonconformance]) -> str:
-    """Итоговый статус изделия с учётом его компонентов."""
+def item_status(
+    item_id: str,
+    history: History,
+    cards: dict[str, Nonconformance],
+    accepted: frozenset[str] = frozenset(),
+    by_item: dict[str, list[Nonconformance]] | None = None,
+) -> str:
+    """Итоговый статус изделия с учётом его компонентов.
+
+    accepted — наблюдения «оценка невозможна», по которым человек допустил изделие по
+    ручному контролю: такое наблюдение считается достоверным и чистым. by_item — карточки
+    по изделию: без него каждое изделие перебирает все карточки, и на десятках тысяч
+    событий пересборка становится квадратичной.
+    """
 
     scope = {item_id, *_descendants(item_id, history)}
-    related = [card for card in cards.values() if card.item_id in scope]
+    if by_item is None:
+        related = [card for card in cards.values() if card.item_id in scope]
+    else:
+        related = [card for member in scope for card in by_item.get(member, [])]
     if any(card.status == CONFIRMED for card in related):
         return "nonconforming"
     if any(card.is_open for card in related):
@@ -250,15 +272,21 @@ def item_status(item_id: str, history: History, cards: dict[str, Nonconformance]
     # Компонент после установки в сборку проверяется финальным контролем сборки, поэтому
     # его итог — итог сборки, если у самого компонента вопросов нет.
     if item.parent_id and item.parent_id in history.items:
-        return item_status(item.parent_id, history, cards)
+        return item_status(item.parent_id, history, cards, accepted, by_item)
+
+    def unclear(obs: Observation) -> bool:
+        return obs.effective_result == "not_assessable" and obs.event.event_id not in accepted
+
     finals = [obs for obs in item.observations if obs.event.checkpoint_kind == "final"]
     if finals:
         last = finals[-1]
-        if last.effective_result == "no_defect_signs" and last.reliable:
+        if (last.effective_result == "no_defect_signs" and last.reliable) or (
+            last.effective_result == "not_assessable" and not unclear(last)
+        ):
             return "conforming"
-        if last.effective_result == "not_assessable":
+        if unclear(last):
             return "not_assessable"
-    if item.observations and item.observations[-1].effective_result == "not_assessable":
+    if item.observations and unclear(item.observations[-1]):
         return "not_assessable"
     return "in_progress"
 

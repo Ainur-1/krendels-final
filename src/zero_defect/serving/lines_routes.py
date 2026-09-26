@@ -22,6 +22,7 @@ from zero_defect.lines.catalog import DEFECTS
 from zero_defect.lines.emulator import LiveEmulator
 from zero_defect.lines.equipment import MACHINE_TYPES, EquipmentStore
 from zero_defect.lines.flow import FlowFile, speed_for
+from zero_defect.lines.follow_up import follow_decision
 from zero_defect.lines.model import Economics, LineConfig, Node
 from zero_defect.lines.store import LineError, LineStore
 from zero_defect.lines.views import (
@@ -360,6 +361,18 @@ def register(
 ) -> IndexCache:
     cache = IndexCache(system, lines)
 
+    def on_decision(kind: str, payload: dict) -> None:
+        # Решение человека продолжает изделие в эмуляции. Сбой здесь не должен отменять
+        # уже записанное решение, поэтому ошибка планирования только пропускает события.
+        if kind != "decision":
+            return
+        try:
+            follow_decision(payload, system, lines, cache, emulator)
+        except Exception:  # noqa: BLE001
+            return
+
+    system.listeners.append(on_decision)
+
     def manager(user: Principal = Depends(principal)) -> Principal:
         return user
 
@@ -477,6 +490,7 @@ def register(
         since: str | None = None,
         node: str | None = None,
         item: str | None = None,
+        problem: str | None = None,
         lane: str = "items",
         _: Principal = Depends(reader),
     ) -> dict:
@@ -485,8 +499,9 @@ def register(
         контролёра, она всегда о настоящем и не зависит от шкалы времени. С at — проблемы
         на тот момент, у действующих отметка, решены ли они к настоящему.
 
-        node и item сужают список до этапа или изделия, since отсекает решённые до начала
-        промежутка. lane=machines — проблемы оборудования вместо проблем изделий.
+        node, item и problem сужают список до этапа, изделия или одной проблемы, since
+        отсекает решённые до начала промежутка. lane=machines — проблемы оборудования
+        вместо проблем изделий.
         """
 
         if lane not in {"items", "machines"}:
@@ -496,7 +511,9 @@ def register(
         found = [
             p
             for p in source(index, state)
-            if (node is None or p["node_id"] == node) and (item is None or p["item_id"] == item)
+            if (node is None or p["node_id"] == node)
+            and (item is None or p["item_id"] == item)
+            and (problem is None or p["problem_id"] == problem)
         ]
         done = set()
         if at:
@@ -518,7 +535,7 @@ def register(
             reverse=True,
         )
         # Очередь линии показывает последние решённые, список этапа или изделия — все.
-        limit = 200 if node or item else 40
+        limit = 200 if node or item or problem else 40
         return {
             "at": at,
             "active": [

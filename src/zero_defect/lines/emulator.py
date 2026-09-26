@@ -386,9 +386,24 @@ class Planner:
             arrivals.append((end, held, item_id, carried))
         if merge is None or any(held for _, held, _, _ in arrivals):
             return
+        at = max(end for end, _, _, _ in arrivals)
+        carried = [defect for *_, component in arrivals for defect in component]
+        components = [component for _, _, component, _ in arrivals]
+        self._assemble(merge, index, components, at, carried, forced)
+
+    def _assemble(
+        self,
+        merge: Node,
+        index: str,
+        components: list[str],
+        at: datetime,
+        carried: list[Carried],
+        forced: dict[str, str],
+    ) -> None:
+        """Сборка комплекта на узле слияния и путь собранного изделия до конца линии."""
+
         product_type = merge.output_type or self.config.product_type_id
         product = f"{self.config.line_id}-{index}-{short_type(product_type)}"
-        at = max(end for end, _, _, _ in arrivals)
         self._emit(
             at,
             "item_registered",
@@ -396,13 +411,12 @@ class Planner:
             item_id=product,
             item_type_id=product_type,
             line_id=self.config.line_id,
-            work_order_id=order_id,
+            work_order_id=f"WO-{self.config.line_id}-{index}",
             origin="manufactured",
         )
-        carried = [defect for *_, component in arrivals for defect in component]
         force = forced.pop(merge.node_id, None)
         at, run_id = self._operation(merge, product, at + self._dur(30), carried, force)
-        for _, _, component, _ in arrivals:
+        for component in components:
             self._emit(
                 at - self._dur(merge.duration_s * 0.5),
                 "component_linked",
@@ -414,6 +428,94 @@ class Planner:
             )
         downstream = self.config.chain_from(merge.node_id)[1:]
         self._run(downstream, product, product_type, at, carried, forced)
+
+    # --- продолжение после решения человека ---------------------------------------------
+
+    def recheck(
+        self,
+        node: Node,
+        item_id: str,
+        item_type: str,
+        at: datetime,
+        defects: list[dict] | None = None,
+    ) -> datetime:
+        """Повторный контроль по решению человека: хороший снимок, признак есть или нет."""
+
+        common = dict(
+            item_id=item_id,
+            item_type_id=item_type,
+            line_id=self.config.line_id,
+            station_id=node.station_id,
+            checkpoint_id=node.checkpoint_id,
+            checkpoint_kind=node.checkpoint_kind,
+            analyzer_version=ANALYZER,
+            observation_quality="good",
+        )
+        source = self._src(node, "vision")
+        if defects:
+            self._emit(
+                at,
+                "inspection_reported",
+                source,
+                inspection_result="defect_signs_found",
+                defects=defects,
+                confidence=round(self.rng.uniform(0.8, 0.95), 2),
+                **common,
+            )
+        else:
+            self._emit(
+                at,
+                "inspection_reported",
+                source,
+                inspection_result="no_defect_signs",
+                confidence=round(self.rng.uniform(0.88, 0.99), 2),
+                **common,
+            )
+        return at + self._dur(node.duration_s)
+
+    def resume(
+        self,
+        item_id: str,
+        item_type: str,
+        at: datetime,
+        checkpoint: Node,
+        rework: Node | None = None,
+        previous_run: str | None = None,
+        ready_components: list[str] | None = None,
+    ) -> None:
+        """
+        Изделие, которое ждало решения у контрольной точки, идёт дальше по линии.
+
+        rework — операция, которую повторяют по решению (у подтверждённого дефекта
+        операции); после неё изделие снова проходит ту же контрольную точку. Дойдя до
+        сборки, компонент собирается, если остальные компоненты комплекта уже там:
+        ready_components — их номера.
+        """
+
+        if rework is not None:
+            at, _ = self._operation(
+                rework,
+                item_id,
+                at,
+                [],
+                None,
+                previous_run=previous_run,
+                reason="доработка по решению контролёра",
+            )
+            at = self.recheck(checkpoint, item_id, item_type, at + self._dur(60))
+        nodes: list[Node] = []
+        merge: Node | None = None
+        for node in self.config.chain_from(checkpoint.node_id)[1:]:
+            if len(self.config.predecessors(node.node_id)) > 1:
+                merge = node
+                break
+            nodes.append(node)
+        at, held = self._run(nodes, item_id, item_type, at, [], {})
+        if held or merge is None or ready_components is None:
+            return
+        prefix = f"{self.config.line_id}-"
+        index = item_id.removeprefix(prefix).rsplit("-", 1)[0]
+        self._assemble(merge, index, [*ready_components, item_id], at, [], {})
 
 
 def _decisions(planner: Planner, rng: random.Random, horizon: datetime) -> list[dict]:
@@ -640,6 +742,32 @@ class LiveEmulator:
         with self._lock:
             self._lines.setdefault(line_id, LiveLine()).forced[node_id] = kind
         return self.status(line_id)
+
+    def follow_up(self, line_id: str, plan) -> int:
+        """
+        События после решения человека: повторный контроль или продолжение изделия. plan
+        получает планировщик и момент начала и пишет в него события; они уходят в систему
+        по мере наступления, в темпе линии.
+        """
+
+        config = self._configs(line_id)
+        if config is None:
+            return 0
+        with self._lock:
+            line = self._lines.setdefault(line_id, LiveLine())
+            self._follow_ups = getattr(self, "_follow_ups", 0) + 1
+            planner = Planner(
+                config,
+                random.Random(),
+                prefix=f"{self._token}D{self._follow_ups}",
+                speed=line.speed,
+            )
+            plan(planner, datetime.fromtimestamp(time.time() + 1, UTC))
+            for at, message in planner.events:
+                self._order += 1
+                heapq.heappush(line.queue, (at.timestamp(), self._order, message))
+        self._ensure_thread()
+        return len(planner.events)
 
     def _ensure_thread(self) -> None:
         if self._thread is None or not self._thread.is_alive():

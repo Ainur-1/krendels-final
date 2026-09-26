@@ -1,7 +1,7 @@
 // Пульт эмулятора: отдельная страница, вынесенная за пределы системы. Отсюда линиями
 // управляют так, как управлял бы стенд: пуск, остановка, дефект в выбранный этап и
 // прогон по данным контракта. Система видит всё это обычными событиями источников.
-import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.5.1";
+import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.5.3";
 
 let lines = [];
 let configs = {};
