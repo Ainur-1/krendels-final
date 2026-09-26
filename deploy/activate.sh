@@ -17,11 +17,14 @@ compose() {
 }
 
 healthy() {
-  local attempt container revision
+  local attempt container emulator revision
   container=$(compose ps -q app)
+  emulator=$(compose ps -q emulator)
   test -n "$container"
+  test -n "$emulator"
   for attempt in $(seq 1 90); do
-    if test "$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null)" = healthy; then
+    if test "$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null)" = healthy &&
+       test "$(docker inspect -f '{{.State.Health.Status}}' "$emulator" 2>/dev/null)" = healthy; then
       revision=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container")
       test "$revision" = "${ZD_IMAGE##*:}"
       curl --fail --silent --show-error http://127.0.0.1:8000/api/health >/dev/null
