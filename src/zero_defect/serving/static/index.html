@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zero Defect</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.5.4">
+  <link rel="stylesheet" href="/static/styles.css?v=0.5.5">
 </head>
 <body>
   <section id="login" class="login hidden">
@@ -44,17 +44,6 @@
     <main id="line-view" class="line-layout hidden">
       <aside id="role-panel" class="card area-left"></aside>
 
-      <section id="stages-drop" class="dropdown area-stages" aria-hidden="true">
-        <div class="dropdown-clip"><div class="dropdown-inner card">
-          <div class="card-head"><h2>Этапы процесса</h2><div class="row">
-            <span id="stages-period" class="muted small"></span>
-            <select id="f-type" aria-label="Тип изделия"></select>
-            <select id="f-shift" aria-label="Смена"><option value="">Все смены</option><option value="S1">Смена S1</option><option value="S2">Смена S2</option></select>
-            <button id="stages-close" class="btn small">Скрыть ▲</button>
-          </div></div>
-          <div id="stages" class="table-wrap"></div>
-        </div></div>
-      </section>
 
       <section class="card area-graph">
         <div class="graph-toolbar">
@@ -77,6 +66,6 @@
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/static/app.js?v=0.5.4"></script>
+  <script type="module" src="/static/app.js?v=0.5.5"></script>
 </body>
 </html>

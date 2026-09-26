@@ -460,10 +460,8 @@ def test_configured_run_on_existing_line(api):
     assert started["emulation"]["run"]["items"] == 3
     bad = {**body, "defects": [{"item": 9, "node_id": "L2-BEND"}]}
     assert api.post("/api/lines/L2/runs", json=bad, headers=headers).status_code == 422
-    assert (
-        api.post("/api/lines/L2/runs", json=body, headers=login(api, "controller")).status_code
-        == 403
-    )
+    # Пульт доступен всем ролям линии, но не без входа.
+    assert api.post("/api/lines/L2/runs", json=body).status_code == 401
 
 
 def test_state_at_moment_hides_the_future(api):

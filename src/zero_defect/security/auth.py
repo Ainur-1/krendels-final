@@ -24,13 +24,15 @@ from zero_defect.ledger.crypto import Keyring
 # начальное наполнение: администратор меняет права и заводит новые роли, и справочник
 # ролей в базе (security/roles.py) обновляет этот словарь на месте.
 PERMISSIONS: dict[str, frozenset[str]] = {
+    # Пульт эмулятора доступен всем ролям линии: на демонстрации каждая роль сама запускает
+    # поток и вносит дефект. Каждое действие пульта пишется в журнал критических действий.
     # Мастер участка решает по проблемам участка так же, как контролёр ОТК: подтверждает и
     # отклоняет сигналы, назначает повторный контроль, закрывает несоответствия и решает
     # «оценка невозможна». Каждое решение — отдельная запись журнала с автором и ролью.
-    "controller": frozenset({"read", "decide", "decide_unassessable"}),
+    "controller": frozenset({"read", "decide", "decide_unassessable", "emulate"}),
     "master": frozenset({"read", "emulate", "decide", "decide_unassessable"}),
     # Технолог заводит конкретный станок по типу, который описал администратор.
-    "technologist": frozenset({"read", "set_cause", "export", "equipment_manage"}),
+    "technologist": frozenset({"read", "set_cause", "export", "equipment_manage", "emulate"}),
     # Руководитель производства — главная роль линии: создаёт линии и видит их экономику.
     "manager": frozenset({"read", "export", "line_manage", "emulate"}),
     "admin": frozenset(

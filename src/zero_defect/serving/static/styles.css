@@ -466,14 +466,14 @@ g.mq-track { animation: mq linear infinite; }
 /* === версия 0.5: промежуток на шкале, вкладки под линией, фокус на проблеме ============= */
 
 /* экран линии: этапы, граф, шкала и подробности — одной колонкой справа от панели роли */
-.line-layout { grid-template-areas: "left stages" "left graph" "left timeline" "left details"; grid-template-rows: auto auto auto 1fr; }
+.line-layout { grid-template-areas: "left graph" "left timeline" "left details"; grid-template-rows: auto auto 1fr; }
 .area-stages { grid-area: stages; min-width: 0; }
 .area-details { grid-area: details; min-width: 0; }
 .area-drawer { display: none; }
 .area-stages .dropdown-inner { max-width: none; border-top: 1px solid var(--line); border-radius: var(--radius); box-shadow: none; max-height: 70vh; }
 .dropdown.area-stages:not(.open) { margin-bottom: calc(-1 * var(--gap)); }
 @media (max-width: 1100px) {
-  .line-layout { grid-template-areas: "stages" "graph" "timeline" "details" "left"; grid-template-rows: none; }
+  .line-layout { grid-template-areas: "graph" "timeline" "details" "left"; grid-template-rows: none; }
 }
 
 .amber-text { color: var(--amber); }

@@ -1,22 +1,22 @@
 // Интерфейс Zero Defect: обзор производства → линия. Всё содержимое выводится на экране
 // линии вокруг её графа: подробности — во вкладках под линией, этапы — в выпадающей сверху
 // панели, время — на шкале. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
-import { CONTRACT } from "./contract.js?v=0.5.4";
-import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.4";
-import { openEditor } from "./editor.js?v=0.5.4";
+import { CONTRACT } from "./contract.js?v=0.5.5";
+import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.5";
+import { openEditor } from "./editor.js?v=0.5.5";
 
 const GUIDE = {
   controller: ["Слева расположена очередь текущих проблем линии: сначала критичные, решённые внизу списка. Очередь не зависит от шкалы времени.", "Выбор проблемы переносит линию в момент её обнаружения и выделяет этап, на котором она обнаружена.", "Во вкладке «Изделие и проблема» слева показано изделие, справа проблема. Решение принимается справа с обязательным обоснованием и записывается отдельной записью журнала."],
   master: ["Слева расположена очередь проблем линии, как у контролёра. Выбранная проблема поднимается наверх очереди.", "Мастер принимает решения по проблемам участка так же, как контролёр: подтверждает или отклоняет сигнал, назначает повторный контроль, закрывает несоответствие. По «Оценка невозможна» назначает повторный контроль или допускает изделие по ручному контролю.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
   technologist: ["Кнопка «Оборудование» в шапке открывает справочник станков. Новый станок регистрируется по типу, который описал администратор.", "Слева расположена очередь сбоев оборудования, состояние станков и подтверждённые несоответствия, по которым технолог устанавливает причину. Красный круг над этапом показывает действующий сбой станка.", "На шкале времени отмечены сбои станков (красным) и их возврат в работу (зелёным).", "Выбор станка открывает во вкладке «Этап» его показатели и графики параметров режима с полосой допуска."],
-  manager: ["Обзор производства показывает все линии и выпускаемые изделия. Кнопка «Новая линия» открывает блочный редактор.", "Операция назначается на станок из справочника оборудования. Обработка и виды дефектов определяются типом станка.", "Кнопка «Экономика» в шапке линии открывает расчёт потерь и затрат на годное изделие."],
+  manager: ["Обзор производства показывает все линии и выпускаемые изделия. Карточка «＋ Новая линия» на экране производства открывает блочный редактор.", "Операция назначается на станок из справочника оборудования. Обработка и виды дефектов определяются типом станка.", "Вкладка «Экономика» под линией открывает расчёт потерь и затрат на годное изделие."],
   admin: ["Главный экран администратора: «Администрирование». Здесь описываются типы станков и виды дефектов, заводятся роли и пользователи.", "Тип станка является шаблоном: обработка, виды дефектов и параметры режима с допусками. Конкретный станок по шаблону регистрирует технолог.", "Раздел «Производство» открывает линии. Режим «Смотреть как» открывает базовый экран выбранной роли, права администратора при этом сохраняются. Экран запоминается для каждой роли отдельно."],
 };
 
 const S = {
   view: "plant", lineId: null, lines: [], plant: null, live: null, timeline: null, overview: null, at: null,
   itemType: "", viewRole: null, detail: null, prevItems: new Map(), prevNodes: {}, geometry: null, zoom: null, playing: null,
-  playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stagesOpen: false, leftOpen: false,
+  playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stageType: "", stageShift: "", leftOpen: false,
   range: { since: null, until: null }, windowMode: null, lane: "items", focusByLane: { items: null, machines: null }, selectedNode: null, queue: null,
   machineQueue: null, hideResolved: false, circle: null, pair: { item: null, problem: null },
 };
@@ -106,7 +106,6 @@ $("left-toggle").addEventListener("click", () => setLeft(!S.leftOpen));
 document.addEventListener("pointerdown", (e) => {
   const t = e.target;
   if (!(t instanceof Element) || t.closest(".modal-backdrop, .toast")) return;
-  if (S.stagesOpen && !t.closest("#stages-drop, [data-act='stages'], .node, #details")) closeStages();
   if (S.leftOpen && S.viewRole === "admin" && !t.closest("#role-panel, #left-toggle")) setLeft(false);
   if (S.circle && !t.closest("#circle-pop, [data-badge]")) closeCircle();
 }, true);
@@ -121,10 +120,9 @@ function renderTop() {
   $("crumbs").querySelector('[data-go="plant"]').addEventListener("click", (e) => { e.preventDefault(); showPlant(); });
   $("crumbs").querySelector('[data-go="admin"]')?.addEventListener("click", (e) => { e.preventDefault(); showAdmin(); });
   $("line-select")?.addEventListener("change", (e) => openLine(e.target.value));
+  // В шапке — только переходы между экранами. Этапы, изделия и экономика линии открываются
+  // вкладками под линией, новая линия — карточкой на экране производства.
   const actions = [];
-  if (S.view === "line") {
-    actions.push(`<button class="btn small ${S.stagesOpen ? "active" : ""}" data-act="stages">Этапы процесса ${S.stagesOpen ? "▲" : "▼"}</button>`, `<button class="btn small" data-act="items">Изделия</button>`, `<button class="btn small" data-act="economics">Экономика</button>`);
-  } else if (S.view === "plant" && can("line_manage")) actions.push(`<button class="btn small" data-act="new-line">Новая линия</button>`);
   if (can("equipment_manage") && !can("admin")) actions.push(`<button class="btn small" data-act="equipment">Оборудование</button>`);
   if (can("emulate")) actions.push(`<a class="btn small" href="/emulator">Пульт эмулятора</a>`);
   $("top-actions").innerHTML = actions.join("");
@@ -132,9 +130,6 @@ function renderTop() {
 }
 
 const ACTIONS = {
-  stages: () => toggleStages(),
-  items: () => openItems(),
-  economics: () => openEconomics(),
   "new-line": () => openEditor({ lines: S.lines, onSaved: afterSave }),
   "edit-line": async () => openEditor({ lines: S.lines, config: await api(`/api/lines/${S.lineId}`), onSaved: afterSave }),
   equipment: () => openEquipment(),
@@ -148,7 +143,6 @@ function showPlant() {
   store.set(viewKey(), "plant");
   stopPollers();
   stopPlaying();
-  closeStages();
   $("line-view").classList.add("hidden");
   $("admin-view").classList.add("hidden");
   $("plant-view").classList.remove("hidden");
@@ -229,7 +223,7 @@ async function openLine(lineId) {
   if (!types.includes(S.itemType)) S.itemType = "";
   const options = (all) => `<option value="">${all}</option>` + types.map((t) => `<option ${t === S.itemType ? "selected" : ""}>${esc(t)}</option>`).join("");
   $("product-filter").innerHTML = options("Все изделия");
-  $("f-type").innerHTML = options("Все типы изделий");
+  S.stageTypes = types;
   renderTop();
   syncLeft();
   renderLegend();
@@ -248,9 +242,9 @@ async function openLine(lineId) {
 
 $("product-filter").addEventListener("change", (e) => {
   S.itemType = e.target.value;
-  $("f-type").value = S.itemType;
+  S.stageType = S.itemType;
   if (S.live) renderGraph(S.live);
-  if (S.stagesOpen) refreshStages();
+  if (S.detail?.tab === "stages") refreshStages();
 });
 
 async function refreshLive() {
@@ -265,7 +259,7 @@ async function refreshLive() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshLive(), refreshOverview(), S.stagesOpen ? refreshStages() : null, S.circle ? loadCircle() : null]);
+  await Promise.all([refreshLive(), refreshOverview(), S.circle ? loadCircle() : null]);
   if (S.detail?.refresh) await S.detail.refresh();
 }
 
@@ -365,7 +359,7 @@ function hoverNode(nodeId, on) {
 function selectNode(nodeId) {
   S.selectedNode = nodeId;
   if (S.live) renderGraph(S.live);
-  $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.node === nodeId));
+  $("stages")?.querySelectorAll("tr[data-node]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.node === nodeId));
 }
 
 // Над этапом один красный круг: число проблем, действующих на выбранный момент. У технолога
@@ -836,30 +830,28 @@ async function selectProblem(p) {
   await Promise.all([jumpTo(p.at), where === "machines" ? openNode(p.node_id) : openProblem(p.problem_id)]);
 }
 
-// --- этапы: развёртка графа сверху, в ширину графа ------------------------------------------------------------
+// --- этапы процесса: вкладка под линией ---------------------------------------------------------------------
 
-function toggleStages() { S.stagesOpen ? closeStages() : openStages(); }
-function openStages() {
-  S.stagesOpen = true;
-  $("stages-drop").classList.add("open");
-  $("stages-drop").setAttribute("aria-hidden", "false");
-  renderTop();
-  refreshStages();
+// Таблица этапов — вкладка под линией рядом с экономикой. Она считается за промежуток
+// шкалы и пересчитывается при каждом его сдвиге.
+function openStagesTab() {
+  const opt = (values, current, all) => `<option value="">${all}</option>` + values.map(([v, l]) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(l)}</option>`).join("");
+  details("stages", `<div class="card-head"><h2>Этапы процесса</h2><div class="row">
+      <span id="stages-period" class="muted small"></span>
+      <select id="f-type" aria-label="Тип изделия">${opt((S.stageTypes || []).map((t) => [t, t]), S.stageType, "Все типы изделий")}</select>
+      <select id="f-shift" aria-label="Смена">${opt([["S1", "Смена S1"], ["S2", "Смена S2"]], S.stageShift, "Все смены")}</select></div></div>
+    <div id="stages" class="table-wrap"><div class="empty">Загрузка.</div></div>`,
+  { refresh: refreshStages, quiet: true }, (body) => {
+    body.querySelector("#f-type").addEventListener("change", (e) => { S.stageType = e.target.value; refreshStages(); });
+    body.querySelector("#f-shift").addEventListener("change", (e) => { S.stageShift = e.target.value; refreshStages(); });
+    refreshStages();
+  });
 }
-function closeStages() {
-  if (!S.stagesOpen) return;
-  S.stagesOpen = false;
-  $("stages-drop").classList.remove("open");
-  $("stages-drop").setAttribute("aria-hidden", "true");
-  if (S.view === "line") renderTop();
-}
-$("stages-close").addEventListener("click", closeStages);
-["f-type", "f-shift"].forEach((id) => $(id).addEventListener("change", refreshStages));
 
 // Срез статистики: промежуток шкалы времени плюс тип изделия и смена.
 function stageQuery({ total = false } = {}) {
   const p = new URLSearchParams();
-  const type = $("f-type").value, shift = $("f-shift").value;
+  const type = S.stageType, shift = S.stageShift;
   if (type) p.set("item_type", type);
   if (shift) p.set("shift", shift);
   if (!total && S.timeline?.start) {
@@ -873,9 +865,11 @@ function stageQuery({ total = false } = {}) {
 const pair = (a, b) => `${a ?? "—"} <span class="muted">/ ${b ?? "—"}</span>`;
 
 async function refreshStages() {
+  if (!$("stages")) return;
   const [rows, totals] = await Promise.all([api(`/api/lines/${S.lineId}/stages?${stageQuery()}`), api(`/api/lines/${S.lineId}/stages?${stageQuery({ total: true })}`)]);
   const all = Object.fromEntries(totals.map((r) => [r.node_id, r]));
   $("stages-period").textContent = `Промежуток: ${time(new Date(sinceMs()).toISOString(), true)} — ${S.range.until ? time(S.range.until, true) : "сейчас"}`;
+  if (!$("stages")) return;
   $("stages").innerHTML = `<p class="muted small">В каждой ячейке: значение за выбранный промежуток / значение на текущий момент.</p>
     <table><tr><th>Этап</th><th class="num">Изделий</th><th class="num">Выполнений, проверок</th><th class="num">В работе</th><th class="num">Доработок</th><th class="num">Длительность</th><th class="num">Отклонений станка</th><th class="num">Обнаружено</th><th class="num">Без признаков</th></tr>
     ${rows.map((r) => {
@@ -1081,9 +1075,10 @@ function bindCommon(root) {
 // сразу открывает и её изделие; выбор изделия справа показывает его проблемы.
 const TABS = [
   ["pair", "Изделие и проблема", ""],
+  ["stages", "Этапы процесса", "Таблица этапов за выбранный промежуток шкалы времени."],
   ["stage", "Этап", "Выберите этап на графе или в таблице этапов. Здесь появятся его показатели за выбранный промежуток, станок и изделия."],
-  ["items", "Изделия линии", "Нажмите «Изделия» в шапке. Здесь появится таблица изделий с фильтрами по столбцам."],
-  ["economics", "Экономика", "Нажмите «Экономика» в шапке. Здесь появятся потери, затраты на годное изделие и параметры расчёта."],
+  ["items", "Изделия линии", "Таблица изделий линии с фильтрами по столбцам."],
+  ["economics", "Экономика", "Потери, затраты на годное изделие и параметры расчёта."],
 ];
 const PAIR_HINT = {
   item: "Здесь появится изделие выбранной проблемы: его маршрут по этапам в хронологии, проблемный и повторный проходы отдельно.",
@@ -1114,6 +1109,7 @@ function showTab(tab) {
   box.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
     // Таблица изделий и экономика загружаются нажатием на саму вкладку.
     if (b.dataset.tab === "items") openItems();
+    else if (b.dataset.tab === "stages") openStagesTab();
     else if (b.dataset.tab === "economics") openEconomics();
     else showTab(b.dataset.tab);
   }));
@@ -1417,7 +1413,7 @@ function openGuide() {
       <section><h3>Шкала времени</h3><p>Шкала задаёт промежуток двумя ползунками, промежуток целиком сдвигается перетаскиванием. Колесо мыши над шкалой приближает её к курсору, Shift и колесо сдвигают, кнопки ＋, －, ⤢ меняют масштаб. Граф показывает состояние линии на конец промежутка, числа под этапами и таблица этапов считаются внутри промежутка. Длина промежутка выбирается кнопками «Сутки», «Смена», «Всё время»; значение по умолчанию задаётся в конфигурации.</p>
         <p>На шкале три цвета: красный означает проблему, жёлтый означает, что оценка невозможна, зелёный означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. У выбранной проблемы возникновение и решение соединены линией. Кнопка «Скрыть решённые» убирает решённые проблемы целиком: и отметку обнаружения, и отметку решения. Решение, принятое при просмотре прошлого, фиксируется текущим временем.</p></section>
       <section><h3>Подробности под линией</h3><p>Вкладки «Изделие и проблема», «Этап», «Изделия линии» и «Экономика» заполняются при выборе события. Во вкладке «Изделие и проблема» слева показано изделие, справа проблема; выбор другой проблемы обновляет изделие. Нажатие на шаг маршрута изделия переносит линию в момент этого шага и открывает его проблему. После решения проблема выделяется в очереди. Изделие, по которому принято решение, эмуляция ведёт дальше: после подтверждения дефекта операции — доработка и повторный контроль, после отклонения сигнала или закрытия — путь дальше по линии. Карточка несоответствия содержит три раздела: исходные сообщения анализатора, разбор системы и решения людей.</p></section>
-      <section><h3>Этапы процесса</h3><p>Кнопка «Этапы процесса» раскрывает таблицу над графом. В каждой ячейке указано значение за выбранный промежуток и значение на текущий момент. Выбор этапа в таблице и на графе синхронизирован.</p></section>
+      <section><h3>Этапы процесса</h3><p>Вкладка «Этапы процесса» под линией показывает таблицу этапов. В каждой ячейке указано значение за выбранный промежуток и значение на текущий момент. Выбор этапа в таблице и на графе синхронизирован.</p></section>
       <section><h3>Новая линия и оборудование</h3><p>Администратор описывает типы станков и виды дефектов. Технолог регистрирует по типу конкретный станок. Руководитель в блочном редакторе назначает операцию на станок из справочника; обработка и виды дефектов определяются типом станка.</p></section>
       <section><h3>Пульт эмулятора</h3><p>Пульт эмулятора открывается в том же окне кнопкой в шапке. В пульте запускается и останавливается эмуляция линии, вносится дефект в выбранный этап и проигрывается прогон по данным контракта. Система принимает события эмулятора как события обычных источников.</p></section>
       <section><h3>Часто задаваемые вопросы</h3><dl><dt>Почему изделие «на рассмотрении», а не «брак»?</dt><dd>Сигнал анализатора становится несоответствием только после подтверждения контролёром.</dd><dt>Почему «оценка невозможна» не считается браком?</dt><dd>Отсутствие признаков при плохом наблюдении не подтверждает ни годность, ни брак. Требуется повторная проверка.</dd><dt>Почему система не называет виновного?</dt><dd>Оператор является участником операции. Ошибка оператора фиксируется только решением человека.</dd></dl></section>
@@ -1438,7 +1434,6 @@ function showAdmin(section = S.adminSection || "machine_types") {
   store.set(viewKey(), "admin");
   stopPollers();
   stopPlaying();
-  closeStages();
   $("plant-view").classList.add("hidden");
   $("line-view").classList.add("hidden");
   $("admin-view").classList.remove("hidden");
