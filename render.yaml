@@ -2,9 +2,9 @@
 services:
   - type: web
     runtime: docker
-    name: krendeli-moscow-preview
+    name: krendels-final
     plan: free
-    region: frankfurt
+    region: oregon
     branch: main
     autoDeployTrigger: checksPass
     healthCheckPath: /api/health
