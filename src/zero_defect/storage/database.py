@@ -19,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     Engine,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -50,6 +51,24 @@ ledger = Table(
     Column("prev_hash", LargeBinary, nullable=False),
     Column("record_hash", LargeBinary, nullable=False),
     Column("signature", LargeBinary, nullable=False),
+)
+
+# Поиск исходного факта по ссылке; сам ref_id не уникален для всех видов записей.
+source_event_ref_index = Index(
+    "ix_ledger_source_event_ref",
+    ledger.c.ref_id,
+    sqlite_where=text("kind = 'source_event'"),
+    postgresql_where=text("kind = 'source_event'"),
+)
+
+# Транзакционный индекс только для тех source_event, у которых payload содержит
+# контрактный event_id. Источником истины остаётся append-only журнал.
+source_event_ids = Table(
+    "source_event_ids",
+    metadata,
+    Column("event_id", String(256), primary_key=True),
+    Column("payload_hash", String(64), nullable=False),
+    Column("ledger_seq", BigInteger, nullable=False, unique=True),
 )
 
 outbox = Table(
@@ -168,6 +187,10 @@ class Database:
         return self.dialect == "postgresql"
 
     def create_schema(self) -> None:
+        # Удаляем ранний черновой индекс, который ошибочно делал все source_event.ref_id
+        # уникальными, включая записи журнала без контрактного event_id.
+        with self.engine.begin() as conn:
+            conn.execute(text("DROP INDEX IF EXISTS uq_ledger_source_event_ref"))
         metadata.create_all(self.engine)
         create_guard(self)
 

@@ -6,17 +6,20 @@ MES по ISA-95 и КОМПАС-3D на примерах сообщений из
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from zero_defect.config import CONTRACTS_DIR, AdapterSettings
+from zero_defect.config import CONTRACTS_DIR, AdapterSettings, load_settings
 from zero_defect.integration import emulator
 from zero_defect.integration.adapters import galaktika, kompas, mes_isa95, onec
 from zero_defect.integration.adapters.mes_emulator import MesEmulatorAdapter
-from zero_defect.integration.hub import IntegrationHub, Outbox
-from zero_defect.integration.model import IntegrationError, QualityResult
+from zero_defect.integration.hub import SEND_LEASE_S, IntegrationHub, Outbox
+from zero_defect.integration.model import Ack, IntegrationError, QualityResult
 from zero_defect.simulation.line import Builder, standard_unit
 from zero_defect.simulation.replay import replay
 
@@ -60,6 +63,68 @@ def test_repeated_sync_does_not_resend(system, hub):
     assert again["pull"]["already_known"] == 6
     assert again["queued"] == 0
     assert len(emulator.received()["reports"]) == 1
+
+
+def test_failed_ingest_does_not_mark_items_as_imported(system, hub, monkeypatch):
+    original_ingest = system.ingest
+
+    def fail_ingest(*args, **kwargs):
+        raise RuntimeError("не удалось записать событие")
+
+    monkeypatch.setattr(system, "ingest", fail_ingest)
+    with pytest.raises(RuntimeError, match="не удалось записать"):
+        hub.pull("mes_emulator")
+    assert not [row for row in hub.outbox.id_map() if row["entity"] == "item"]
+
+    monkeypatch.setattr(system, "ingest", original_ingest)
+    assert hub.pull("mes_emulator")["registered"] == 6
+
+
+def test_parallel_flush_claims_message_once(system, hub, monkeypatch):
+    result = QualityResult("QR-CLAIM", "WO-9001", "U-9001", "UNIT-U1", "conforming")
+    assert hub.outbox.enqueue("mes_emulator", result)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def send_result(message):
+        calls.append(message.message_id)
+        entered.set()
+        assert release.wait(5)
+        return Ack(message.message_id, True)
+
+    monkeypatch.setattr(hub.adapters["mes_emulator"], "send_result", send_result)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(hub.flush, "mes_emulator")
+        try:
+            assert entered.wait(5)
+            second = pool.submit(hub.flush, "mes_emulator")
+            assert second.result(timeout=5) == {
+                "delivered": 0,
+                "retry_later": 0,
+                "dead_letter": 0,
+            }
+        finally:
+            release.set()
+        assert first.result(timeout=5)["delivered"] == 1
+    assert calls == ["QR-CLAIM"]
+    assert hub.outbox.rows()[0]["attempts"] == 1
+
+
+def test_expired_claim_is_retried_without_stale_writer_overwrite(hub):
+    result = QualityResult("QR-LEASE", "WO-9001", "U-9001", "UNIT-U1", "conforming")
+    assert hub.outbox.enqueue("mes_emulator", result)
+    now = datetime.now(UTC)
+    first = hub.outbox.due("mes_emulator", now)
+    assert [attempts for _, _, attempts in first] == [1]
+    assert hub.outbox.due("mes_emulator", now) == []
+    later = now + timedelta(seconds=SEND_LEASE_S + 1)
+    second = hub.outbox.due("mes_emulator", later)
+    assert [attempts for _, _, attempts in second] == [2]
+    assert not hub.outbox.mark("QR-LEASE", "delivered", 1, None, now, None)
+    assert hub.outbox.mark("QR-LEASE", "pending", 2, "сбой", later, None)
+    row = hub.outbox.rows()[0]
+    assert row["status"] == "pending" and row["attempts"] == 2
 
 
 def test_outage_keeps_message_in_queue_until_recovery(system, hub):
@@ -108,6 +173,49 @@ def test_onec_mapping_round_trip():
     assert outbound["Результат"] == "Брак"
 
 
+def test_onec_environment_auth_and_published_base_path(monkeypatch):
+    monkeypatch.setenv("ZD_INTEGRATION_ENABLED", "onec")
+    monkeypatch.setenv("ZD_ONEC_BASE_URL", "https://erp.example/production/")
+    monkeypatch.setenv("ZD_ONEC_USERNAME", "quality-reader")
+    monkeypatch.setenv("ZD_ONEC_PASSWORD", "not-for-logs")
+    monkeypatch.setenv("ZD_ONEC_ODATA_PATH", "odata/standard.odata")
+    monkeypatch.setenv("ZD_ONEC_NOMENCLATURE_OBJECT", "Catalog_Parts")
+
+    settings = load_settings().adapters["onec"]
+    adapter = onec.OneCAdapter(settings)
+    request = adapter.client.build_request(
+        "GET", onec.url(settings.nomenclature_object, root=settings.odata_path)
+    )
+
+    assert request.url.path == "/production/odata/standard.odata/Catalog_Parts"
+    assert isinstance(adapter.client.auth, httpx.BasicAuth)
+    assert "not-for-logs" not in repr(settings)
+    adapter.client.close()
+
+
+def test_onec_basic_auth_requires_https():
+    with pytest.raises(ValueError, match="только по HTTPS"):
+        onec.OneCAdapter(
+            AdapterSettings(base_url="http://erp.example", username="reader", password="secret")
+        )
+
+
+def test_onec_accepts_empty_success_response():
+    client = httpx.Client(
+        base_url="https://erp.example/production/",
+        transport=httpx.MockTransport(lambda request: httpx.Response(204)),
+    )
+    adapter = onec.OneCAdapter(AdapterSettings(), client=client)
+    result = QualityResult("QR-1C", "WO-1", "UNIT-1", "UNIT-U1", "conforming")
+
+    try:
+        ack = adapter.send_result(result)
+    finally:
+        client.close()
+
+    assert ack.accepted and ack.external_ref is None
+
+
 def test_onec_unmapped_nomenclature_is_a_content_error():
     with pytest.raises(IntegrationError) as error:
         onec.order_to_internal(
@@ -120,15 +228,19 @@ def test_galaktika_files(tmp_path):
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     (inbox / "orders.xml").write_text(
-        (EXAMPLES / "galaktika_orders.xml").read_text(encoding="utf-8")
+        (EXAMPLES / "galaktika_orders.xml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (inbox / "nomenclature.xml").write_text(
-        (EXAMPLES / "galaktika_nomenclature.xml").read_text(encoding="utf-8")
+        (EXAMPLES / "galaktika_nomenclature.xml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     adapter = galaktika.GalaktikaFileAdapter(tmp_path)
     order = adapter.fetch_work_orders()[0]
+    assert order.work_order_id == "ПЗ-77"
     assert [item.parent_id for item in order.items] == [None, "U-GAL-0001", "U-GAL-0001"]
-    assert "BODY-K1" in adapter.fetch_reference().item_types
+    reference = adapter.fetch_reference()
+    assert reference.item_types["UNIT-U1"] == "Узел крепления в сборе"
+    assert reference.item_types["BODY-K1"] == "Корпус"
+    assert reference.item_types["FLANGE-F2"] == "Фланец"
     ack = adapter.send_result(QualityResult("QR-G", "ПЗ-77", "U-GAL-0001", "UNIT-U1", "conforming"))
     written = (tmp_path / "outbox" / "QR-G.xml").read_text(encoding="utf-8")
     assert ack.accepted and 'verdict="ACCEPT"' in written
@@ -165,7 +277,8 @@ def test_kompas_assembly_file(tmp_path):
         kompas.load_assembly(path)
 
 
-def test_kompas_com_explains_itself_off_windows():
+def test_kompas_com_explains_itself_off_windows(monkeypatch):
+    monkeypatch.setattr(kompas.sys, "platform", "linux")
     with pytest.raises(IntegrationError) as error:
         kompas.KompasComSource().load("C:/assembly.a3d")
     assert "Windows" in str(error.value)

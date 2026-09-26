@@ -8,7 +8,7 @@
 
 Имена объектов конфигурации (Catalog_Номенклатура, Document_ЗаказНаПроизводство,
 Document_КонтрольКачества) — проектное предположение: в конкретной конфигурации они
-могут называться иначе и настраиваются в OBJECTS без правки кода.
+могут называться иначе и задаются в настройках адаптера после сверки с $metadata.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ OBJECTS = {
 VERDICTS = {"conforming": "Годно", "nonconforming": "Брак", "suspect": "НаПроверке"}
 
 
-def url(entity: str, query: str = "$format=json") -> str:
-    return f"{ODATA_ROOT}/{quote(entity)}?{query}"
+def url(entity: str, query: str = "$format=json", root: str = ODATA_ROOT) -> str:
+    return f"/{root.strip('/')}/{quote(entity)}?{query}"
 
 
 def nomenclature_to_internal(payload: dict) -> tuple[ReferenceData, dict[str, str]]:
@@ -89,48 +89,77 @@ def result_to_external(result: QualityResult, type_keys: dict[str, str]) -> dict
 
 
 class OneCAdapter:
-    """Клиент OData 1С. Авторизация — базовая, учётная запись из переменных окружения."""
+    """Клиент OData 1С; параметры публикации и служебной учётной записи задаются извне."""
 
     name = "onec"
 
     def __init__(self, settings: AdapterSettings, client: httpx.Client | None = None) -> None:
+        if bool(settings.username) != bool(settings.password):
+            raise ValueError("для 1С нужны оба параметра служебной учётной записи")
+        if settings.username and not settings.base_url.startswith("https://") and client is None:
+            raise ValueError("базовую авторизацию 1С разрешено передавать только по HTTPS")
         # trust_env=False: маршрут к внутренней системе задаётся конфигурацией, а не
         # системными переменными прокси — иначе запрос к MES в соседней стойке
         # внезапно уходил бы через прокси организации.
         self.client = client or httpx.Client(
-            base_url=settings.base_url, timeout=settings.timeout_s, trust_env=False
+            base_url=settings.base_url,
+            timeout=settings.timeout_s,
+            trust_env=False,
+            auth=httpx.BasicAuth(settings.username, settings.password)
+            if settings.username
+            else None,
         )
+        self.root = settings.odata_path
+        self.objects = {
+            "nomenclature": settings.nomenclature_object,
+            "orders": settings.orders_object,
+            "result": settings.result_object,
+        }
         self.type_keys: dict[str, str] = {}
 
+    def _get_json(self, entity: str, query: str) -> dict:
+        try:
+            response = self.client.get(url(entity, query, self.root))
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            raise IntegrationError(
+                f"1С OData ответила HTTP {status}", retryable=status == 429 or status >= 500
+            ) from error
+        except httpx.RequestError as error:
+            raise IntegrationError("нет соединения с 1С OData", retryable=True) from error
+        except ValueError as error:
+            raise IntegrationError("1С OData вернула некорректный JSON", retryable=False) from error
+
     def fetch_reference(self) -> ReferenceData:
-        response = self.client.get(
-            url(OBJECTS["nomenclature"], "$format=json&$select=Ref_Key,Code,Description")
+        payload = self._get_json(
+            self.objects["nomenclature"], "$format=json&$select=Ref_Key,Code,Description"
         )
-        response.raise_for_status()
-        reference, self.type_keys = nomenclature_to_internal(response.json())
+        reference, self.type_keys = nomenclature_to_internal(payload)
         return reference
 
     def fetch_work_orders(self) -> list[WorkOrder]:
         if not self.type_keys:
             self.fetch_reference()
-        response = self.client.get(url(OBJECTS["orders"], "$format=json&$filter=Posted eq true"))
-        response.raise_for_status()
-        return [order_to_internal(row, self.type_keys) for row in response.json().get("value", [])]
+        payload = self._get_json(self.objects["orders"], "$format=json&$filter=Posted eq true")
+        return [order_to_internal(row, self.type_keys) for row in payload.get("value", [])]
 
     def send_result(self, result: QualityResult) -> Ack:
         try:
             response = self.client.post(
-                url(OBJECTS["result"]), json=result_to_external(result, self.type_keys)
+                url(self.objects["result"], root=self.root),
+                json=result_to_external(result, self.type_keys),
             )
         except httpx.HTTPError as error:
             return Ack(
                 result.message_id,
                 False,
                 error_code="connection_error",
-                error_message=str(error),
+                error_message=type(error).__name__,
                 retryable=True,
             )
-        if response.status_code >= 500:
+        if response.status_code == 429 or response.status_code >= 500:
             return Ack(
                 result.message_id, False, error_code=f"http_{response.status_code}", retryable=True
             )
@@ -138,4 +167,12 @@ class OneCAdapter:
             return Ack(
                 result.message_id, False, error_code=f"http_{response.status_code}", retryable=False
             )
-        return Ack(result.message_id, True, external_ref=response.json().get("Ref_Key"))
+        external_ref = response.headers.get("Location")
+        if response.content:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict):
+                external_ref = body.get("Ref_Key", external_ref)
+        return Ack(result.message_id, True, external_ref=external_ref)

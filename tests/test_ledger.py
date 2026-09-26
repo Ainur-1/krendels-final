@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -148,6 +150,8 @@ def test_hybrid_signature_needs_both_halves():
 
 
 def test_secret_files_are_owner_only(tmp_path):
+    if os.name == "nt":
+        pytest.skip("проверка POSIX-прав выполняется в Linux-контейнере")
     keyring = Keyring(tmp_path / "keys")
     keyring.ensure("classic-v1")
     mode = (tmp_path / "keys" / "keyring.json").stat().st_mode & 0o777

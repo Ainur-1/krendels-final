@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from collections.abc import Iterator
@@ -30,6 +31,7 @@ from zero_defect.config import RECORD_FORMAT_VERSION
 from zero_defect.ledger.crypto import PROFILES, CryptoError, Keyring
 from zero_defect.storage.database import Database
 from zero_defect.storage.database import ledger as ledger_table
+from zero_defect.storage.database import source_event_ids as source_event_ids_table
 
 GENESIS = b"\x00" * 32
 
@@ -126,6 +128,19 @@ class Ledger:
         with self.database.engine.connect() as conn:
             return conn.execute(select(func.count()).select_from(ledger_table)).scalar_one()
 
+    def event_hashes(self, event_ids: set[str]) -> dict[str, str]:
+        """Снимок межпроцессного индекса идемпотентности для контрактных event_id."""
+
+        if not event_ids:
+            return {}
+        with self.database.engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    source_event_ids_table.c.event_id, source_event_ids_table.c.payload_hash
+                ).where(source_event_ids_table.c.event_id.in_(event_ids))
+            )
+            return dict(rows.all())
+
     def append(self, kind: str, payload: dict, ref_id: str | None = None) -> Header:
         return self.append_many([(kind, payload, ref_id)])[0]
 
@@ -139,6 +154,7 @@ class Ledger:
         secret = self.keyring.secret(key.key_id)
         headers: list[Header] = []
         rows: list[dict] = []
+        event_index_rows: list[dict] = []
         with self.database.ledger_transaction() as conn:
             head = conn.execute(
                 select(ledger_table.c.seq, cast(ledger_table.c.record_hash, LargeBinary))
@@ -181,13 +197,29 @@ class Ledger:
                         "signature": signature,
                     }
                 )
+                event = payload.get("event") if kind == "source_event" else None
+                event_id = event.get("event_id") if isinstance(event, dict) else None
+                if isinstance(event_id, str) and event_id:
+                    digest = hashlib.sha256(canonical({"raw": event})).hexdigest()
+                    event_index_rows.append(
+                        {"event_id": event_id, "payload_hash": digest, "ledger_seq": seq}
+                    )
                 prev_hash = record_hash
                 headers.append(header)
             conn.execute(insert(ledger_table), rows)
-        # Якорь пишется после фиксации транзакции: якорь впереди журнала выглядел бы как
-        # отрезанный хвост, хотя транзакция просто не прошла.
-        with self.database.write_lock:
-            self._write_anchor(seq, prev_hash)
+            if event_index_rows:
+                conn.execute(insert(source_event_ids_table), event_index_rows)
+        # После фиксации берём ту же межпроцессную блокировку писателя и читаем
+        # актуальную голову заново. Иначе два процесса могли бы записать якоря в
+        # обратном порядке и старый якорь затёр бы новый.
+        with self.database.ledger_transaction() as conn:
+            head = conn.execute(
+                select(ledger_table.c.seq, cast(ledger_table.c.record_hash, LargeBinary))
+                .order_by(ledger_table.c.seq.desc())
+                .limit(1)
+            ).first()
+            if head is not None:
+                self._write_anchor(head[0], bytes(head[1]))
         return headers
 
     def _write_anchor(self, seq: int, record_hash: bytes) -> None:
@@ -203,7 +235,11 @@ class Ledger:
         self._anchor_path.parent.mkdir(parents=True, exist_ok=True)
         self._anchor_path.write_text(json.dumps(anchor), encoding="utf-8")
 
-    def _rows(self, kinds: tuple[str, ...] | None = None) -> Iterator[tuple]:
+    def _rows(
+        self,
+        kinds: tuple[str, ...] | None = None,
+        ref_ids: set[str] | None = None,
+    ) -> Iterator[tuple]:
         # Двоичные столбцы приводятся к двоичному типу явно: если в обход приложения туда
         # записали текст, чтение не падает целиком, а проверка указывает на испорченную
         # запись.
@@ -227,14 +263,20 @@ class Ledger:
         ).order_by(c.seq)
         if kinds:
             query = query.where(c.kind.in_(kinds))
+        if ref_ids is not None:
+            query = query.where(c.ref_id.in_(ref_ids))
         with self.database.engine.connect() as conn:
             for row in conn.execute(query):
                 yield (*row[:10], *(bytes(value or b"") for value in row[10:15]))
 
-    def records(self, kinds: tuple[str, ...] | None = None) -> Iterator[Record]:
+    def records(
+        self,
+        kinds: tuple[str, ...] | None = None,
+        ref_ids: set[str] | None = None,
+    ) -> Iterator[Record]:
         """Расшифрованные записи по порядку. Сбой одной записи не прерывает чтение."""
 
-        for row in self._rows(kinds):
+        for row in self._rows(kinds, ref_ids):
             header = Header(*row[:10])
             nonce, ciphertext = row[10], row[11]
             profile = PROFILES.get(header.profile_id)

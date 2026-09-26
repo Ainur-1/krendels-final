@@ -36,8 +36,8 @@ services:
   emulator:
     build: .
     command: ["uvicorn", "zero_defect.integration.emulator:app", "--host", "0.0.0.0", "--port", "8100"]
-    ports:
-      - "8100:8100"
+    # Сервис доступен приложению по имени emulator внутри сети Compose. Наружу порт
+    # не публикуется: у эмулятора есть административные маршруты управления сбоями.
 
 volumes:
   zd-db:

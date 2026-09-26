@@ -8,9 +8,15 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 
+import pytest
+
 from tests.helpers import NOW, message
+from zero_defect.storage.database import Database
 
 
 def test_duplicate_is_recorded_once(system):
@@ -91,3 +97,76 @@ def test_state_survives_restart(settings, system):
         assert reopened.ingest([message()], received_at=NOW)[0].status == "duplicate"
     finally:
         reopened.close()
+
+
+def test_failed_append_does_not_remember_unwritten_event(system, monkeypatch):
+    append = system.ledger.append_many
+
+    def fail_once(_entries):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(system.ledger, "append_many", fail_once)
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        system.ingest([message()], received_at=NOW)
+    assert system.pipeline.stats == {"accepted": 0, "duplicates": 0, "rejected": 0}
+    assert system.ledger.count() == 0
+
+    monkeypatch.setattr(system.ledger, "append_many", append)
+    assert system.ingest([message()], received_at=NOW)[0].status == "accepted"
+
+
+def test_two_live_instances_share_source_event_identity(settings):
+    from zero_defect.service import QualitySystem
+
+    first = QualitySystem(settings)
+    second = QualitySystem(settings)
+    try:
+        assert first.ingest([message()], received_at=NOW)[0].status == "accepted"
+        assert second.ingest([message()], received_at=NOW)[0].status == "duplicate"
+        conflict = second.ingest([message(item_type_id="BODY-K9")], received_at=NOW)[0]
+        assert conflict.status == "rejected"
+        assert conflict.errors[0]["code"] == "conflicting_duplicate"
+        assert first.ledger.count() == 3
+    finally:
+        first.close()
+        second.close()
+
+
+def test_concurrent_instances_commit_source_event_only_once(settings, database_url, monkeypatch):
+    from zero_defect.service import QualitySystem
+
+    settings = replace(settings, storage_url=database_url)
+    first = QualitySystem(settings)
+    second = QualitySystem(settings)
+    # Два отдельных Engine имитируют независимые процессы и не делят Python-lock.
+    first_database = Database(database_url)
+    second_database = Database(database_url)
+    first.database = first.ledger.database = first_database
+    first.pipeline.ledger = first.ledger
+    second.database = second.ledger.database = second_database
+    second.pipeline.ledger = second.ledger
+    barrier = threading.Barrier(2)
+    for instance in (first, second):
+        original = instance.ledger.append_many
+        arrived = [False]
+
+        def synchronize(entries, original=original, arrived=arrived):
+            if not arrived[0]:
+                arrived[0] = True
+                barrier.wait(timeout=5)
+            return original(entries)
+
+        monkeypatch.setattr(instance.ledger, "append_many", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(instance.ingest, [message()], NOW) for instance in (first, second)
+            ]
+            statuses = [future.result()[0].status for future in futures]
+        assert sorted(statuses) == ["accepted", "duplicate"]
+        assert first.ledger.count() == 2
+    finally:
+        first.close()
+        second.close()
+        first_database.dispose()
+        second_database.dispose()

@@ -55,6 +55,13 @@ class AdapterSettings:
     base_url: str = ""
     timeout_s: float = 5.0
     max_attempts: int = 5
+    # Параметры 1С задаются отдельно: имена объектов зависят от конфигурации базы.
+    odata_path: str = "odata/standard.odata"
+    nomenclature_object: str = "Catalog_Номенклатура"
+    orders_object: str = "Document_ЗаказНаПроизводство"
+    result_object: str = "Document_КонтрольКачества"
+    username: str = ""
+    password: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -136,6 +143,16 @@ def load_settings(path: Path | None = None, **overrides: object) -> Settings:
             base_url=_env(name, "base_url") or section.get("base_url", ""),
             timeout_s=float(section.get("timeout_s", 5.0)),
             max_attempts=int(section.get("max_attempts", 5)),
+            odata_path=_env(name, "odata_path")
+            or section.get("odata_path", "odata/standard.odata"),
+            nomenclature_object=_env(name, "nomenclature_object")
+            or section.get("nomenclature_object", "Catalog_Номенклатура"),
+            orders_object=_env(name, "orders_object")
+            or section.get("orders_object", "Document_ЗаказНаПроизводство"),
+            result_object=_env(name, "result_object")
+            or section.get("result_object", "Document_КонтрольКачества"),
+            username=_env(name, "username") or "",
+            password=_env(name, "password") or "",
         )
 
     values: dict[str, object] = {

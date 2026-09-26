@@ -18,7 +18,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -34,6 +34,9 @@ REPORTABLE = ("conforming", "nonconforming")
 # Пауза перед повтором растёт вдвое с каждой неудачей, но не больше часа.
 BASE_BACKOFF_S = 5
 MAX_BACKOFF_S = 3600
+# После аварии отправителя сообщение снова становится доступным. Номер попытки
+# служит версией захвата и не даёт запоздалому отправителю затереть новый ответ.
+SEND_LEASE_S = 300
 
 
 class Outbox:
@@ -72,16 +75,38 @@ class Outbox:
             return conn.execute(statement).rowcount == 1
 
     def due(self, system: str, moment: datetime) -> list[tuple[str, dict, int]]:
+        """Атомарно забрать готовые сообщения, включая просроченные захваты."""
+
         c = outbox_table.c
+        available = and_(
+            c.next_attempt <= moment.isoformat(),
+            or_(c.status == "pending", c.status == "sending"),
+        )
         with self.database.engine.connect() as conn:
             rows = conn.execute(
                 select(c.message_id, c.payload, c.attempts)
-                .where(
-                    c.system == system, c.status == "pending", c.next_attempt <= moment.isoformat()
-                )
+                .where(c.system == system, available)
                 .order_by(c.created_at)
             ).all()
-        return [(row[0], json.loads(row[1]), row[2]) for row in rows]
+        claimed = []
+        lease_until = (moment + timedelta(seconds=SEND_LEASE_S)).isoformat()
+        for message_id, payload, attempts in rows:
+            # UPDATE с условиями выполняется в транзакции: конкурирующий процесс
+            # увидит rowcount=0, даже если оба прочитали одну строку выше.
+            with self.database.engine.begin() as conn:
+                result = conn.execute(
+                    update(outbox_table)
+                    .where(
+                        c.message_id == message_id,
+                        c.system == system,
+                        c.attempts == attempts,
+                        available,
+                    )
+                    .values(status="sending", attempts=attempts + 1, next_attempt=lease_until)
+                )
+            if result.rowcount == 1:
+                claimed.append((message_id, json.loads(payload), attempts + 1))
+        return claimed
 
     def mark(
         self,
@@ -91,11 +116,15 @@ class Outbox:
         error: str | None,
         next_attempt: datetime,
         ref: str | None,
-    ) -> None:
+    ) -> bool:
         with self.database.engine.begin() as conn:
-            conn.execute(
+            result = conn.execute(
                 update(outbox_table)
-                .where(outbox_table.c.message_id == message_id)
+                .where(
+                    outbox_table.c.message_id == message_id,
+                    outbox_table.c.status == "sending",
+                    outbox_table.c.attempts == attempts,
+                )
                 .values(
                     status=status,
                     attempts=attempts,
@@ -104,6 +133,7 @@ class Outbox:
                     external_ref=ref,
                 )
             )
+        return result.rowcount == 1
 
     def rows(self) -> list[dict]:
         c = outbox_table.c
@@ -203,6 +233,7 @@ class IntegrationHub:
         orders = adapter.fetch_work_orders()
         adapter.fetch_reference()
         messages = []
+        pending_ids = []
         received = datetime.now(UTC)
         # Изделие, уже сопоставленное с этой системой, повторно не регистрируется. Иначе
         # повторная выгрузка задания давала бы то же событие с другим временем, а такое
@@ -221,7 +252,7 @@ class IntegrationHub:
                 if planned.item_id in known:
                     already_known += 1
                     continue
-                self.outbox.map_id(name, "item", planned.item_id, planned.item_id)
+                pending_ids.append(planned.item_id)
                 messages.append(
                     {
                         "event_id": f"int-{name}-{order.work_order_id}-{planned.item_id}",
@@ -237,6 +268,12 @@ class IntegrationHub:
                     }
                 )
         results = self.system.ingest(messages, received_at=received)
+        # Сопоставление означает, что факт действительно попал в журнал. Если
+        # запись сорвалась или событие попало в карантин, следующая выгрузка
+        # должна снова попытаться зарегистрировать изделие.
+        for item_id, result in zip(pending_ids, results, strict=True):
+            if result.status in ("accepted", "duplicate"):
+                self.outbox.map_id(name, "item", item_id, item_id)
         return {
             "orders": len(orders),
             "registered": sum(1 for result in results if result.status == "accepted"),
@@ -268,24 +305,29 @@ class IntegrationHub:
                 **{**payload, "nonconformances": tuple(payload["nonconformances"])}
             )
             ack = adapter.send_result(result)
-            attempts += 1
             if ack.accepted:
-                status, delivered = "delivered", delivered + 1
+                status = "delivered"
                 next_attempt = moment
             elif (
                 ack.retryable
                 and attempts < self.system.settings.adapters.get(name, _Default).max_attempts
             ):
-                status, retry = "pending", retry + 1
+                status = "pending"
                 delay = min(BASE_BACKOFF_S * 2 ** (attempts - 1), MAX_BACKOFF_S)
                 next_attempt = moment + timedelta(seconds=delay)
             else:
-                status, failed = "dead_letter", failed + 1
+                status = "dead_letter"
                 next_attempt = moment
             error = (
                 None if ack.accepted else f"{ack.error_code}: {ack.error_message or ''}".strip(": ")
             )
-            self.outbox.mark(message_id, status, attempts, error, next_attempt, ack.external_ref)
+            saved = self.outbox.mark(
+                message_id, status, attempts, error, next_attempt, ack.external_ref
+            )
+            if saved:
+                delivered += status == "delivered"
+                retry += status == "pending"
+                failed += status == "dead_letter"
             self.system.record_exchange(
                 {
                     "system": name,
@@ -294,7 +336,7 @@ class IntegrationHub:
                     "item_id": result.item_id,
                     "verdict": result.verdict,
                     "attempt": attempts,
-                    "status": status,
+                    "status": status if saved else "stale_lease",
                     "error": error,
                     "external_ref": ack.external_ref,
                     "at": moment.isoformat(),

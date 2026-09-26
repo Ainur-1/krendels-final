@@ -203,12 +203,14 @@ def _doc_source(schemas: list[SchemaFile]) -> str:
         "| файл | что это |",
         "|---|---|",
         *[
-            f"| `{GENERATED_PACKAGE}/{item.module}.py` | модели pydantic версии {item.version} |"
+            f"| `{GENERATED_PACKAGE.as_posix()}/{item.module}.py` "
+            f"| модели pydantic версии {item.version} |"
             for item in schemas
         ],
-        f"| `{GENERATED_PACKAGE}/__init__.py` | реестр моделей по версии и типу события |",
-        f"| `{CONTRACT_DOC}` | этот документ |",
-        f"| `{CONTRACT_JS}` | перечисления контракта для интерфейса |",
+        f"| `{GENERATED_PACKAGE.as_posix()}/__init__.py` "
+        "| реестр моделей по версии и типу события |",
+        f"| `{CONTRACT_DOC.as_posix()}` | этот документ |",
+        f"| `{CONTRACT_JS.as_posix()}` | перечисления контракта для интерфейса |",
         "",
         "Автоматические проверки в CI:",
         "",
