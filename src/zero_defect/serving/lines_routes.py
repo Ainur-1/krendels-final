@@ -477,6 +477,7 @@ def register(
         since: str | None = None,
         _: Principal = Depends(reader),
     ) -> dict:
+        emulator.watch(line_id)
         index, state = cache.get(line_id, at)
         return {
             **live_view(

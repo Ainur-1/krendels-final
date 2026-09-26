@@ -408,8 +408,10 @@ class QualitySystem:
         try:
             state = self._build(events, decisions)
             with self._lock:
-                # Шкалу времени двигают рывками, поэтому помнится дюжина последних моментов.
-                if len(self._moments) >= 12:
+                # Шкалу времени двигают рывками, поэтому помнятся последние моменты. Каждый —
+                # полный снимок (на 22 тыс. событий дюжина снимков добавляла около 80 МБ),
+                # поэтому их четыре.
+                if len(self._moments) >= 4:
                     self._moments.pop(next(iter(self._moments)))
                 self._moments[key] = (moment, state)
         finally:

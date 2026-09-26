@@ -722,3 +722,19 @@ def test_confirmed_defect_is_reworked_and_the_item_goes_on(api):
     labels = [visit["label"] for visit in after["visits"]]
     assert "rework" in labels, "после подтверждения — доработка на гибке"
     assert labels.index("rework") < len(labels) - 1, "и путь дальше по линии"
+
+
+def test_emulation_starts_new_items_only_while_someone_watches():
+    from zero_defect.lines.emulator import LiveEmulator
+
+    config = default_lines()[1]
+    delivered: list[dict] = []
+    emulator = LiveEmulator(delivered.extend, lambda line_id: config)
+    emulator.start(config.line_id)
+    later = time.time() + LiveEmulator.WATCH_S + 60
+    emulator.tick(later)
+    assert emulator.status(config.line_id)["sets_started"] == 0, "без зрителя новых изделий нет"
+    emulator.watch(config.line_id)
+    emulator.tick(time.time())
+    assert emulator.status(config.line_id)["sets_started"] == 1
+    emulator.shutdown()

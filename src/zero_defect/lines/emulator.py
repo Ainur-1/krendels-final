@@ -686,6 +686,11 @@ class LiveEmulator:
     """Фоновый поток, который ведёт живые линии и отдаёт события в систему."""
 
     TICK_S = 0.5
+    # Новые комплекты запускаются, только пока линию кто-то смотрит: последний опрос экрана
+    # линии был не раньше чем столько секунд назад. Без этого развёрнутый сервис за сутки
+    # без зрителей набирал больше 250 тыс. событий (около 11 тыс. в час на двух линиях), а
+    # с ними росли память и время пересборки. Уже запущенные изделия доезжают до конца.
+    WATCH_S = 300.0
 
     def __init__(self, ingest, configs) -> None:
         self._ingest = ingest
@@ -696,6 +701,13 @@ class LiveEmulator:
         self._thread: threading.Thread | None = None
         self._token = datetime.now(UTC).strftime("V%H%M%S")
         self._order = 0
+        self._watched: dict[str, float] = {}
+        self._started = time.time()
+
+    def watch(self, line_id: str) -> None:
+        """Экран линии открыт: эмуляция этой линии продолжает запускать изделия."""
+
+        self._watched[line_id] = time.time()
 
     def status(self, line_id: str) -> dict:
         with self._lock:
@@ -836,7 +848,8 @@ class LiveEmulator:
                 config = self._configs(line_id)
                 if config is None:
                     continue
-                if line.running and now >= line.next_spawn:
+                watched = now - self._watched.get(line_id, self._started) <= self.WATCH_S
+                if line.running and watched and now >= line.next_spawn:
                     if line.planner is None or line.planner.config.version != config.version:
                         line.planner = Planner(
                             config, random.Random(), prefix=f"{self._token}", hold_unclear=True
