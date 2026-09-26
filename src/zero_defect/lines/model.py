@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 
+from zero_defect.lines.equipment import SEED_TYPES
+
 KINDS = ("operation", "inspection")
 CHECKPOINT_KINDS = ("incoming", "after_operation", "final")
 
@@ -33,6 +35,9 @@ class Node:
     duration_s: float = 600.0
     operation_id: str | None = None
     equipment_id: str | None = None
+    # Тип станка и обработка на нём — из справочника оборудования (lines/equipment.py).
+    machine_type: str | None = None
+    processing: str | None = None
     operators: list[str] = field(default_factory=list)
     assembly: bool = False
     output_type: str | None = None
@@ -196,13 +201,22 @@ class LineConfig:
             line_id=data["line_id"],
             title=data["title"],
             product_type_id=data.get("product_type_id", ""),
-            nodes=[Node(**node) for node in data["nodes"]],
+            nodes=[_node(node) for node in data["nodes"]],
             edges=[tuple(edge) for edge in data["edges"]],
             economics=Economics(**data.get("economics", {})),
             description=data.get("description", ""),
             takt_s=float(data.get("takt_s", 900.0)),
             version=int(data.get("version", 1)),
         )
+
+
+def _node(data: dict) -> Node:
+    node = Node(**data)
+    # Линии, сохранённые до справочника оборудования, типа станка не знают: он
+    # восстанавливается по коду станка демонстрационных линий.
+    if node.kind == "operation" and not node.machine_type:
+        node.machine_type = SEED_TYPES.get(node.equipment_id or "")
+    return node
 
 
 def default_lines() -> list[LineConfig]:
@@ -240,6 +254,8 @@ def default_lines() -> list[LineConfig]:
                 1500,
                 operation_id="OP-MILL-010",
                 equipment_id="CNC-01",
+                machine_type="cnc_mill",
+                processing="фрезерование",
                 operators=["OP-101", "OP-104"],
                 defect_rate=0.06,
                 defect_types=["BURR", "SCRATCH"],
@@ -267,6 +283,8 @@ def default_lines() -> list[LineConfig]:
                 1200,
                 operation_id="OP-WELD-020",
                 equipment_id="WELD-01",
+                machine_type="welder",
+                processing="аргонодуговая сварка",
                 operators=["OP-102", "OP-105"],
                 defect_rate=0.07,
                 defect_types=["POROSITY", "LACK_OF_FUSION", "CRACK"],
@@ -309,6 +327,8 @@ def default_lines() -> list[LineConfig]:
                 900,
                 operation_id="OP-ASM-030",
                 equipment_id="ASM-TOOL-01",
+                machine_type="assembly",
+                processing="резьбовая сборка",
                 operators=["OP-103"],
                 assembly=True,
                 output_type="UNIT-U1",
@@ -378,6 +398,8 @@ def default_lines() -> list[LineConfig]:
                 420,
                 operation_id="OP2-CUT-010",
                 equipment_id="LASER-01",
+                machine_type="laser",
+                processing="лазерная резка",
                 operators=["OP-201", "OP-202"],
                 defect_rate=0.04,
                 defect_types=["BURR", "DROSS"],
@@ -393,6 +415,8 @@ def default_lines() -> list[LineConfig]:
                 360,
                 operation_id="OP2-BEND-020",
                 equipment_id="PRESS-01",
+                machine_type="press_brake",
+                processing="гибка",
                 operators=["OP-203"],
                 defect_rate=0.05,
                 defect_types=["CRACK", "ANGLE_DEVIATION"],
@@ -419,6 +443,8 @@ def default_lines() -> list[LineConfig]:
                 600,
                 operation_id="OP2-PAINT-030",
                 equipment_id="PAINT-01",
+                machine_type="paint_booth",
+                processing="окраска",
                 operators=["OP-204"],
                 defect_rate=0.05,
                 defect_types=["COATING_GAP", "SAG"],

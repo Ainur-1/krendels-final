@@ -122,18 +122,16 @@ def login(client, user_id: str) -> dict:
 
 
 def test_only_main_role_creates_lines(api):
-    assert api.post("/api/lines", json=SPEC, headers=login(api, "master-01")).status_code == 403
-    created = api.post("/api/lines", json=SPEC, headers=login(api, "head-01"))
+    assert api.post("/api/lines", json=SPEC, headers=login(api, "master")).status_code == 403
+    created = api.post("/api/lines", json=SPEC, headers=login(api, "manager"))
     assert created.status_code == 200
-    assert api.post("/api/lines", json=SPEC, headers=login(api, "head-01")).status_code == 409
-    lines = {
-        line["line_id"] for line in api.get("/api/lines", headers=login(api, "master-01")).json()
-    }
+    assert api.post("/api/lines", json=SPEC, headers=login(api, "manager")).status_code == 409
+    lines = {line["line_id"] for line in api.get("/api/lines", headers=login(api, "master")).json()}
     assert {"L1", "L2", "LT"} <= lines
 
 
 def test_items_filter_by_columns(api):
-    headers = login(api, "tech-01")
+    headers = login(api, "technologist")
     everything = api.get("/api/lines/L1/items?limit=1000", headers=headers).json()
     units = api.get("/api/lines/L1/items?item_type=UNIT-U1&limit=1000", headers=headers).json()
     assert units["total"] < everything["total"]
@@ -150,7 +148,7 @@ def test_flow_upload_runs_to_completion(api):
     flow["run"]["items"] = 4
     flow["run"]["defects"] = [{"item": 2, "stage": 4, "kind": "defect"}]
     flow["run"]["duration_s"] = 10
-    headers = login(api, "head-01")
+    headers = login(api, "manager")
     started = api.post("/api/flows", json=flow, headers=headers).json()
     assert started["emulation"]["run"]["events_total"] > 0
     emulator = api.app.state.emulator
@@ -171,11 +169,11 @@ def test_flow_upload_runs_to_completion(api):
 def test_flow_with_defect_outside_line_is_refused(api):
     flow = json.loads((DATA_DIR / "flows" / "bracket_minute.json").read_text(encoding="utf-8"))
     flow["run"]["defects"] = [{"item": 1, "stage": 99}]
-    assert api.post("/api/flows", json=flow, headers=login(api, "head-01")).status_code == 422
+    assert api.post("/api/flows", json=flow, headers=login(api, "manager")).status_code == 422
 
 
 def test_economics_uses_parameters_and_measurements(api):
-    headers = login(api, "head-01")
+    headers = login(api, "manager")
     before = api.get("/api/lines/L1/economics", headers=headers).json()
     assert before["measured"]["products"] > 0
     api.put(
@@ -184,29 +182,34 @@ def test_economics_uses_parameters_and_measurements(api):
     after = api.get("/api/lines/L1/economics", headers=headers).json()
     assert after["computed"]["scrap_cost_rub"] == 0 and after["computed"]["rework_cost_rub"] == 0
     assert (
-        api.put("/api/lines/L1/economics", json={}, headers=login(api, "ctrl-01")).status_code
+        api.put("/api/lines/L1/economics", json={}, headers=login(api, "controller")).status_code
         == 403
     )
 
 
 def test_password_login(api):
     system = api.app.state.system
+    demo = {"user_id": "administrator", "password": "administrator"}
+    assert api.post("/api/auth/login", json=demo).json()["user"]["role"] == "admin"
     assert (
-        api.post("/api/auth/login", json={"user_id": "ctrl-01", "password": "x"}).status_code == 401
+        api.post("/api/auth/login", json={"user_id": "controller", "password": "x"}).status_code
+        == 401
     )
-    system.users.set_password("ctrl-01", "длинный-пароль-1")
-    ok = api.post("/api/auth/login", json={"user_id": "ctrl-01", "password": "длинный-пароль-1"})
+    system.users.set_password("controller", "длинный-пароль-1")
+    ok = api.post("/api/auth/login", json={"user_id": "controller", "password": "длинный-пароль-1"})
     assert ok.status_code == 200 and ok.json()["user"]["role"] == "controller"
     assert (
-        api.post("/api/auth/login", json={"user_id": "ctrl-01", "password": "не тот"}).status_code
+        api.post(
+            "/api/auth/login", json={"user_id": "controller", "password": "не тот"}
+        ).status_code
         == 401
     )
 
 
 def test_admin_can_list_users(api):
-    users = api.get("/api/admin/users", headers=login(api, "admin-01")).json()
+    users = api.get("/api/admin/users", headers=login(api, "administrator")).json()
     assert {user["role"] for user in users} >= {"controller", "manager", "admin"}
-    assert api.get("/api/admin/users", headers=login(api, "head-01")).status_code == 403
+    assert api.get("/api/admin/users", headers=login(api, "manager")).status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -257,6 +260,8 @@ GRAPH = {
             "x": 300,
             "y": 100,
             "duration_min": 4,
+            "equipment_id": "ASM-TOOL-01",
+            "processing": "запрессовка",
             "defect_types": ["DENT"],
         },
         {
@@ -273,18 +278,121 @@ GRAPH = {
 
 
 def test_graph_from_blocks_builds_an_assembly(api):
-    headers = login(api, "head-01")
+    headers = login(api, "manager")
     assert api.post("/api/lines/graph", json=GRAPH, headers=headers).status_code == 200
     config = api.get("/api/lines/LG", headers=headers).json()
     nodes = {node["node_id"]: node for node in config["nodes"]}
     assert nodes["C"]["assembly"] is True and nodes["C"]["output_type"] == "ASM-G"
     assert nodes["A"]["checkpoint_kind"] == "incoming" and nodes["D"]["checkpoint_kind"] == "final"
+    assert nodes["C"]["machine_type"] == "assembly" and nodes["C"]["processing"] == "запрессовка"
     cyclic = {**GRAPH, "edges": GRAPH["edges"] + [["D", "A"]]}
     assert api.put("/api/lines/LG/graph", json=cyclic, headers=headers).status_code == 422
 
 
+def test_editing_existing_line_keeps_its_history(api):
+    headers = login(api, "manager")
+    config = api.get("/api/lines/L1", headers=headers).json()
+    before = {
+        row["node_id"]: row["items"]
+        for row in api.get("/api/lines/L1/stages", headers=headers).json()
+    }
+    keep = ("node_id", "title", "kind", "x", "y", "defect_types", "rework_types", "equipment_id")
+    keep += ("processing", "operators", "checkpoint_kind", "item_type_id", "origin", "output_type")
+    keep += ("station_id", "operation_id", "checkpoint_id")
+    nodes = [
+        {**{key: node[key] for key in keep}, "duration_min": node["duration_s"] / 60}
+        for node in config["nodes"]
+    ]
+    nodes = [
+        dict(node, equipment_id="CNC-02") if node["node_id"] == "MILL" else node for node in nodes
+    ]
+    spec = {
+        "line_id": "L1",
+        "title": config["title"],
+        "product_type_id": config["product_type_id"],
+        "takt_min": config["takt_s"] / 60,
+        "nodes": nodes,
+        "edges": config["edges"],
+        "economics": config["economics"],
+    }
+    assert api.put("/api/lines/L1/graph", json=spec, headers=headers).status_code == 200
+    after = {
+        row["node_id"]: row["items"]
+        for row in api.get("/api/lines/L1/stages", headers=headers).json()
+    }
+    assert after == before and after["WELD"] > 0
+
+
+def _with_operation(**changes) -> dict:
+    nodes = [dict(node, **changes) if node["node_id"] == "C" else node for node in GRAPH["nodes"]]
+    return {**GRAPH, "line_id": "LG2", "nodes": nodes}
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"equipment_id": "NEW-99"}, "не зарегистрирован"),
+        ({"processing": "фрезерование"}, "не выполняет"),
+        ({"defect_types": ["POROSITY"]}, "не относятся"),
+    ],
+)
+def test_operation_uses_only_registered_equipment(api, changes, reason):
+    response = api.post(
+        "/api/lines/graph", json=_with_operation(**changes), headers=login(api, "manager")
+    )
+    assert response.status_code == 422 and reason in response.json()["detail"]
+
+
+def test_admin_registers_machine_and_manager_picks_it(api):
+    spec = {
+        "equipment_id": "WELD-09",
+        "title": "Аргонодуговая установка №9",
+        "machine_type": "welder",
+        "parameters": {"current_a": {"low": 150, "high": 180}},
+    }
+    assert (
+        api.post("/api/admin/equipment", json=spec, headers=login(api, "manager")).status_code
+        == 403
+    )
+    admin = login(api, "administrator")
+    created = api.post("/api/admin/equipment", json=spec, headers=admin).json()
+    assert created["defect_types"] == ["POROSITY", "LACK_OF_FUSION", "CRACK"]
+    assert created["parameters"]["current_a"]["high"] == 180
+    assert api.post("/api/admin/equipment", json=spec, headers=admin).status_code == 422
+    bad = {**spec, "parameters": {"current_a": {"low": 200, "high": 180}}}
+    assert api.put("/api/admin/equipment/WELD-09", json=bad, headers=admin).status_code == 422
+    catalog = api.get("/api/catalog", headers=login(api, "manager")).json()
+    assert "WELD-09" in {machine["equipment_id"] for machine in catalog["equipment"]}
+    assert "аргонодуговая сварка" in catalog["machine_types"]["welder"]["processing"]
+    graph = _with_operation(
+        equipment_id="WELD-09", processing="прихватка", defect_types=["POROSITY"]
+    )
+    assert (
+        api.post("/api/lines/graph", json=graph, headers=login(api, "manager")).status_code == 200
+    )
+
+
+def test_stage_shows_machine_readings_with_tolerances(api):
+    data = api.get("/api/lines/L1/stages/WELD", headers=login(api, "technologist")).json()
+    machine = data["machine"]
+    assert machine["machine_type"] == "welder" and "current_a" in machine["parameters"]
+    limits = machine["parameters"]
+
+    def outside(event: dict) -> bool:
+        return any(
+            not limits[key]["low"] <= value <= limits[key]["high"]
+            for key, value in event["parameters"].items()
+            if key in limits
+        )
+
+    readings = [event for event in machine["events"] if event["parameters"]]
+    assert readings, "эмулятор пишет показания станка"
+    assert not any(outside(event) for event in readings if event["state"] == "running")
+    assert all(outside(event) for event in readings if event["state"] == "deviation")
+
+
 def test_configured_run_on_existing_line(api):
-    headers = login(api, "master-01")
+    headers = login(api, "master")
     body = {
         "items": 3,
         "duration_s": 10,
@@ -297,12 +405,13 @@ def test_configured_run_on_existing_line(api):
     bad = {**body, "defects": [{"item": 9, "node_id": "L2-BEND"}]}
     assert api.post("/api/lines/L2/runs", json=bad, headers=headers).status_code == 422
     assert (
-        api.post("/api/lines/L2/runs", json=body, headers=login(api, "ctrl-01")).status_code == 403
+        api.post("/api/lines/L2/runs", json=body, headers=login(api, "controller")).status_code
+        == 403
     )
 
 
 def test_state_at_moment_hides_the_future(api):
-    headers = login(api, "ctrl-01")
+    headers = login(api, "controller")
     timeline = api.get("/api/lines/L1/timeline", headers=headers).json()
     detected = [m for m in timeline["markers"] if m["kind"] == "detected"]
     assert detected, "в демонстрационной базе должны быть обнаружения"
@@ -316,20 +425,20 @@ def test_state_at_moment_hides_the_future(api):
 
 
 def test_plant_overview_lists_lines_and_products(api):
-    data = api.get("/api/plant", headers=login(api, "master-01")).json()
+    data = api.get("/api/plant", headers=login(api, "master")).json()
     assert {line["line_id"] for line in data["lines"]} >= {"L1", "L2"}
     products = {entry["item_type"]: entry["lines"] for entry in data["products"]}
     assert products["UNIT-U1"] == ["L1"]
 
 
 def test_live_view_counts_statuses_per_stage(api):
-    live = api.get("/api/lines/L1/live", headers=login(api, "master-01")).json()
+    live = api.get("/api/lines/L1/live", headers=login(api, "master")).json()
     total = sum(sum(node["counts"].values()) for node in live["nodes"])
     assert total + sum(live["entry_counts"].values()) == len(live["items"])
 
 
 def test_admin_sees_database_without_secrets(api):
-    headers = login(api, "admin-01")
+    headers = login(api, "administrator")
     db = api.get("/api/admin/db", headers=headers).json()
     ledger = next(table for table in db["tables"] if table["table"] == "ledger")
     assert "ciphertext" not in ledger["columns"] and "ciphertext" in ledger["hidden"]
@@ -344,7 +453,7 @@ def test_admin_sees_database_without_secrets(api):
         row["equipment_id"] == "WELD-01"
         for row in api.get("/api/admin/equipment", headers=headers).json()
     )
-    assert api.get("/api/admin/db", headers=login(api, "head-01")).status_code == 403
+    assert api.get("/api/admin/db", headers=login(api, "manager")).status_code == 403
 
 
 def test_emulator_console_page_is_served(api):

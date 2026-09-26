@@ -98,6 +98,17 @@ lines = Table(
     Column("updated_by", String(64), nullable=False),
 )
 
+# Справочник оборудования: станок целиком одной записью, как и линия. Заводит и меняет
+# его администратор, каждое изменение пишется в журнал критических действий.
+equipment = Table(
+    "equipment",
+    metadata,
+    Column("equipment_id", String(64), primary_key=True),
+    Column("config", Text, nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Column("updated_by", String(64), nullable=False),
+)
+
 # Номер рекомендательной блокировки PostgreSQL, под которой пишется журнал. Номер записи и
 # хеш предыдущей берутся атомарно и между процессами: два экземпляра сервиса на одной
 # базе не разветвят цепочку.

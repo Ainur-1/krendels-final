@@ -1,10 +1,11 @@
 """
 Пользователи в базе данных: роль, пароль, признак активности.
 
-При первом запуске таблица заполняется условными пользователями из config/users.toml —
-без паролей. Такие пользователи входят только в демонстрационном режиме. Пароль задаёт
-администратор командой scripts/keys.py password <пользователь>; хранится только
-хеш scrypt с солью, сам пароль нигде не записывается.
+При запуске в таблицу добавляются недостающие пользователи из config/users.toml. В
+демонстрационном режиме пароль совпадает с логином (administrator / administrator):
+так экран входа работает как настоящий, а показ не требует заводить пароли. В рабочем
+режиме пароль задаёт администратор командой scripts/keys.py password <пользователь>;
+хранится только хеш scrypt с солью, сам пароль нигде не записывается.
 """
 
 from __future__ import annotations
@@ -48,24 +49,38 @@ def check_password(password: str, stored: str | None) -> bool:
 class UserStore:
     """Чтение и изменение пользователей."""
 
-    def __init__(self, database: Database, seed_path: Path) -> None:
+    def __init__(self, database: Database, seed_path: Path, demo: bool = False) -> None:
         self.database = database
+        seed = load_users(seed_path)
         with database.engine.begin() as conn:
-            if conn.execute(select(users_table.c.user_id).limit(1)).first() is None:
-                now = datetime.now(UTC).isoformat()
-                rows = [
-                    {
-                        "user_id": user.user_id,
-                        "name": user.name,
-                        "role": user.role,
-                        "password_hash": None,
-                        "active": True,
-                        "created_at": now,
-                    }
-                    for user in load_users(seed_path).values()
-                ]
-                if rows:
-                    conn.execute(insert(users_table), rows)
+            existing = dict(
+                conn.execute(select(users_table.c.user_id, users_table.c.password_hash)).all()
+            )
+            now = datetime.now(UTC).isoformat()
+            rows = [
+                {
+                    "user_id": user.user_id,
+                    "name": user.name,
+                    "role": user.role,
+                    "password_hash": None,
+                    "active": True,
+                    "created_at": now,
+                }
+                for user in seed.values()
+                if user.user_id not in existing
+            ]
+            if rows:
+                conn.execute(insert(users_table), rows)
+            if demo:
+                # Пароль задаётся только тем, у кого его ещё нет: заданный администратором
+                # пароль демонстрационный режим не перетирает.
+                for user_id in seed:
+                    if not existing.get(user_id):
+                        conn.execute(
+                            update(users_table)
+                            .where(users_table.c.user_id == user_id)
+                            .values(password_hash=hash_password(user_id))
+                        )
 
     def all(self) -> dict[str, Principal]:
         with self.database.engine.connect() as conn:

@@ -110,6 +110,17 @@
       "GraphNodeSpec": {
         "description": "Блок редактора линии: этап со своими параметрами и положением на холсте.",
         "properties": {
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id"
+          },
           "checkpoint_kind": {
             "anyOf": [
               {
@@ -175,6 +186,17 @@
             "title": "Node Id",
             "type": "string"
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
           "operators": {
             "default": [],
             "items": {
@@ -200,6 +222,17 @@
             ],
             "title": "Output Type"
           },
+          "processing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing"
+          },
           "rework_types": {
             "default": [],
             "items": {
@@ -207,6 +240,17 @@
             },
             "title": "Rework Types",
             "type": "array"
+          },
+          "station_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Station Id"
           },
           "title": {
             "maxLength": 120,
@@ -406,6 +450,73 @@
           "user_id"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "MachineSpec": {
+        "description": "Станок, как его заводит администратор: паспорт, дефекты и допуски параметров.",
+        "properties": {
+          "defect_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect Types"
+          },
+          "equipment_id": {
+            "maxLength": 48,
+            "minLength": 1,
+            "title": "Equipment Id",
+            "type": "string"
+          },
+          "inventory_no": {
+            "default": "",
+            "title": "Inventory No",
+            "type": "string"
+          },
+          "machine_type": {
+            "title": "Machine Type",
+            "type": "string"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "equipment_id",
+          "title",
+          "machine_type"
+        ],
+        "title": "MachineSpec",
         "type": "object"
       },
       "PasswordLogin": {
@@ -800,8 +911,8 @@
     },
     "/api/admin/equipment": {
       "get": {
-        "description": "Оборудование линий: на каком этапе стоит, кто работает, последнее состояние.",
-        "operationId": "equipment_api_admin_equipment_get",
+        "description": "Справочник станков: паспорт, где стоит по конфигурации линий, последнее состояние.",
+        "operationId": "equipment_list_api_admin_equipment_get",
         "parameters": [
           {
             "in": "header",
@@ -829,7 +940,7 @@
                     "additionalProperties": true,
                     "type": "object"
                   },
-                  "title": "Response Equipment Api Admin Equipment Get",
+                  "title": "Response Equipment List Api Admin Equipment Get",
                   "type": "array"
                 }
               }
@@ -847,7 +958,130 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Equipment"
+        "summary": "Equipment List"
+      },
+      "post": {
+        "operationId": "equipment_create_api_admin_equipment_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MachineSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Equipment Create Api Admin Equipment Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment Create"
+      }
+    },
+    "/api/admin/equipment/{equipment_id}": {
+      "put": {
+        "operationId": "equipment_update_api_admin_equipment__equipment_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "equipment_id",
+            "required": true,
+            "schema": {
+              "title": "Equipment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MachineSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Equipment Update Api Admin Equipment  Equipment Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Equipment Update"
       }
     },
     "/api/admin/roles": {
@@ -1099,6 +1333,55 @@
           }
         },
         "summary": "Auth Options"
+      }
+    },
+    "/api/catalog": {
+      "get": {
+        "description": "Справочники для редактора линии: дефекты, типы станков, станки.",
+        "operationId": "catalog_api_catalog_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Catalog Api Catalog Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Catalog"
       }
     },
     "/api/contracts": {

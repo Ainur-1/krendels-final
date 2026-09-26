@@ -76,7 +76,7 @@ class QualitySystem:
         self.database = open_database(resolve_storage_url(settings))
         self.ledger = Ledger(self.database, self.keyring)
         self.pipeline = IngestPipeline(settings, self.ledger)
-        self.users = UserStore(self.database, settings.users_path)
+        self.users = UserStore(self.database, settings.users_path, demo=settings.demo)
         self.security = SecurityBus(self.keyring, self.users, self._audit_sink)
         self.listeners: list[Listener] = []
         self._events = []

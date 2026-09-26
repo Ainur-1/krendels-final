@@ -1,22 +1,22 @@
 // Интерфейс Zero Defect: обзор производства → линия. Всё содержимое выводится на экране
 // линии вокруг её графа: детали — в правой панели, этапы — в выпадающей сверху панели,
 // время — на шкале внизу. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
-import { CONTRACT } from "./contract.js?v=0.3.4";
-import { $, L, api, badge, can, esc, login, logout, mins, modal, notify, pct, poller, rub, session, store, time } from "./common.js?v=0.3.4";
-import { openEditor } from "./editor.js?v=0.3.4";
+import { CONTRACT } from "./contract.js?v=0.4.0";
+import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.4.0";
+import { openEditor } from "./editor.js?v=0.4.0";
 
 const GUIDE = {
   controller: ["Откройте линию — слева очередь несоответствий, сначала критичные.", "«⟲ к моменту отказа» переносит линию в момент обнаружения: видно, что происходило на станках тогда.", "Откройте карточку и примите решение с обоснованием — оно ляжет отдельной записью, исходное сообщение не меняется."],
   master: ["Обзор производства показывает все линии; красная рамка — у линии есть несоответствия, ждущие решения.", "На линии под каждым станком — сколько изделий в каком статусе у него стоит.", "Слева — операции в работе, отклонения оборудования и пропуски сообщений."],
-  technologist: ["Слева — где возникают дефекты по оценке системы.", "«Этапы процесса» в шапке раскрывает статистику по каждому этапу с фильтрами по изделию, смене и периоду.", "Оранжевая метка на станке — дефекты, возникшие на нём; нажмите, чтобы увидеть их."],
-  manager: ["Обзор производства — все линии и изделия; «Новая линия» открывает блочный редактор.", "«Экономика» считает потери, затраты на годное и пропускную способность по вашим параметрам.", "«Пульт эмулятора» — отдельная страница: прогон по данным контракта и управление эмуляцией."],
-  admin: ["«Администрирование» — оборудование, справочник дефектов, база данных, роли и права, целостность журнала.", "«Смотреть как» показывает экран любой роли — права при этом остаются вашими.", "«Добавить станок» в разделе оборудования открывает редактор линии с новым блоком."],
+  technologist: ["Слева — где возникают дефекты по оценке системы и сбои оборудования: полоса у каждого станка показывает его последние состояния, красное — выход режима за допуск.", "Нажмите станок — справа его показатели с оценкой цветом и графики параметров режима с полосой допуска.", "«Этапы процесса» в шапке раскрывает статистику по каждому этапу с фильтрами по изделию, смене и периоду."],
+  manager: ["Обзор производства — все линии и изделия; «Новая линия» открывает блочный редактор.", "Операцию ставят на станок из справочника: обработка и виды дефектов подтягиваются по типу станка. Новый станок заводит администратор.", "«Экономика» в шапке линии считает потери, затраты на годное и пропускную способность по вашим параметрам."],
+  admin: ["Кнопка ☰ слева от названия линии открывает панель администрирования; поле линии при этом сдвигается, а не перекрывается.", "«Оборудование и станки» — справочник: новый станок с типом, дефектами и допусками параметров заводится здесь.", "«Смотреть как» показывает экран любой роли — права при этом остаются вашими."],
 };
 
 const S = {
   view: "plant", lineId: null, lines: [], plant: null, live: null, timeline: null, overview: null, at: null,
   itemType: "", viewRole: null, drawer: null, prevItems: new Map(), prevNodes: {}, geometry: null, zoom: null, playing: null,
-  playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stagesOpen: false,
+  playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stagesOpen: false, leftOpen: false,
 };
 const withAt = (path) => (S.at ? `${path}${path.includes("?") ? "&" : "?"}at=${encodeURIComponent(S.at)}` : path);
 
@@ -26,11 +26,25 @@ async function showLogin() {
   stopPollers();
   $("app").classList.add("hidden");
   $("login").classList.remove("hidden");
+  const form = $("password-form");
+  form.reset();
   const options = await api("/api/auth/options");
-  $("role-cards").innerHTML = options.users.map((u) => `<button class="role-card" data-user="${esc(u.user_id)}"><b>${esc(L.role[u.role] || u.role)}</b><span>${esc(u.name)} · ${esc(u.user_id)}</span></button>`).join("") || `<p class="muted">Вход по имени пользователя и паролю.</p>`;
-  $("role-cards").querySelectorAll("[data-user]").forEach((b) => b.addEventListener("click", async () => {
-    const r = await api("/api/auth/demo-login", { method: "POST", body: JSON.stringify({ user_id: b.dataset.user }) });
-    await enter(r.token);
+  demoRoles(options);
+  form.user_id.focus();
+}
+
+// Демонстрационный вход: карточка роли подставляет логин и пароль в обычную форму и
+// отправляет её. В демонстрационном режиме пароль совпадает с логином. При встраивании
+// в систему предприятия удаляются эта функция и блок #demo-roles — вход не меняется.
+function demoRoles(options) {
+  const box = $("demo-roles");
+  box.classList.toggle("hidden", !options.demo || !options.users.length);
+  $("role-cards").innerHTML = options.users.map((u) => `<button type="button" class="role-card" data-user="${esc(u.user_id)}"><b>${esc(L.role[u.role] || u.role)}</b><span class="mono">${esc(u.user_id)} / ${esc(u.user_id)}</span></button>`).join("");
+  $("role-cards").querySelectorAll("[data-user]").forEach((b) => b.addEventListener("click", () => {
+    const form = $("password-form");
+    form.user_id.value = b.dataset.user;
+    form.password.value = b.dataset.user;
+    form.requestSubmit();
   }));
 }
 $("password-form").addEventListener("submit", async (e) => {
@@ -51,7 +65,7 @@ async function enter(token) {
   $("view-as-wrap").classList.toggle("hidden", !can("view_as"));
   $("view-as").innerHTML = Object.keys(GUIDE).map((r) => `<option value="${r}">${esc(L.role[r])}</option>`).join("");
   $("view-as").value = S.viewRole;
-  $("view-as").onchange = () => { S.viewRole = $("view-as").value; renderRolePanel(); };
+  $("view-as").onchange = () => { S.viewRole = $("view-as").value; syncLeft(); renderRolePanel(); };
   S.lines = await api("/api/lines");
   const saved = store.get("zd-line");
   if (saved && S.lines.some((l) => l.line_id === saved) && store.get("zd-view") === "line") openLine(saved);
@@ -62,6 +76,28 @@ session.onExpired = () => showLogin();
 $("open-guide").addEventListener("click", openGuide);
 
 function stopPollers() { S.pollers.forEach((p) => p.stop()); S.pollers = []; }
+
+// --- панель администратора: свёрнута в ☰ и при открытии сдвигает поле линии ----------------------
+
+function syncLeft() {
+  const burger = S.viewRole === "admin";
+  $("left-toggle").classList.toggle("hidden", !burger);
+  $("left-toggle").classList.toggle("active", burger && S.leftOpen);
+  $("line-view").classList.toggle("left-closed", burger && !S.leftOpen);
+}
+function setLeft(open) { S.leftOpen = open; syncLeft(); }
+$("left-toggle").addEventListener("click", () => setLeft(!S.leftOpen));
+
+// Любая выплывающая панель закрывается нажатием вне её. Нажатия, которые сами открывают
+// панель (станок, изделие, метка на шкале), её не закрывают — иначе она мигала бы.
+const OPENERS = ".node, [data-node], [data-item], [data-nc], [data-rollback], [data-badge], [data-origin-node], .tl-mark, [data-act], [data-open], [data-admin]";
+document.addEventListener("pointerdown", (e) => {
+  const t = e.target;
+  if (!(t instanceof Element) || t.closest(".modal-backdrop, .toast")) return;
+  if (S.stagesOpen && !t.closest("#stages-drop, [data-act='stages']")) closeStages();
+  if (S.drawer && !t.closest(`.area-drawer, ${OPENERS}`)) drawerDefault();
+  if (S.leftOpen && S.viewRole === "admin" && !t.closest("#role-panel, #left-toggle")) setLeft(false);
+}, true);
 
 function renderTop() {
   const crumbs = [`<a href="#" data-go="plant" class="${S.view === "plant" ? "current" : ""}">Производство</a>`];
@@ -166,6 +202,7 @@ async function openLine(lineId) {
   $("product-filter").innerHTML = options("все изделия");
   $("f-type").innerHTML = options("все типы изделий");
   renderTop();
+  syncLeft();
   drawerDefault();
   await Promise.all([refreshLive(), refreshOverview(), refreshTimeline()]);
   S.pollers.push(poller(() => (S.at ? null : refreshLive()), 1500), poller(() => (S.at ? null : refreshOverview()), 5000), poller(() => (S.at ? null : refreshTimeline()), 10000));
@@ -204,7 +241,7 @@ function geometry(raw) {
   const box = { x: Math.min(...xs) - NODE_W / 2 - 60, y: Math.min(...ys) - NODE_H / 2 - 40 };
   box.w = Math.max(...xs) + NODE_W / 2 + 40 - box.x;
   box.h = Math.max(...ys) + NODE_H / 2 + 60 - box.y;
-  return { box, pos: Object.fromEntries(nodes.map((n) => [n.node_id, n])), key: `${S.lineId}:${raw.map((n) => `${n.node_id}@${n.x},${n.y}`).join(",")}` };
+  return { box, pos: Object.fromEntries(nodes.map((n) => [n.node_id, n])), key: `${S.lineId}:${raw.map((n) => `${n.node_id}@${n.x},${n.y}:${n.title}:${n.equipment_id}:${n.processing}`).join(",")}` };
 }
 
 function edgePath(a, b) {
@@ -229,16 +266,17 @@ function buildGraph(live) {
   const edges = live.edges.map(([a, b]) => `<path class="edge" data-edge="${esc(a)}>${esc(b)}" d="${edgePath(g.pos[a], g.pos[b])}" marker-end="url(#arrow)"/>`).join("");
   const nodes = Object.values(g.pos).map((n) => {
     const icon = n.kind === "operation" ? (n.assembly ? "⧉" : "⚙") : "◉";
-    const sub = n.kind === "operation" ? (n.equipment_id || n.station_id) : ({ incoming: "входной контроль", after_operation: "контроль", final: "финальный контроль" }[n.checkpoint_kind] || "контроль");
-    const title = n.title.length > 19 ? `${n.title.slice(0, 18)}…` : n.title;
+    const sub = n.kind === "operation" ? [n.equipment_id || n.station_id, n.processing].filter(Boolean).join(" · ") : ({ incoming: "входной контроль", after_operation: "контроль", final: "финальный контроль" }[n.checkpoint_kind] || "контроль");
+    // Длинный текст не обрезается многоточием, а бежит строкой внутри блока (marqueeSvg).
     return `<g class="node ${n.kind}" data-node="${esc(n.node_id)}" transform="translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})">
       <rect class="box" width="${NODE_W}" height="${NODE_H}" rx="12"/>
-      <text class="icon" x="12" y="24">${icon}</text><text x="32" y="24">${esc(title)}</text>
-      <text class="sub" x="12" y="44">${esc(sub)}</text><text class="sub" data-f="passed" x="12" y="60"></text>
+      <text class="icon" x="12" y="24">${icon}</text><text x="32" y="24" data-fit="${NODE_W - 42}">${esc(n.title)}</text>
+      <text class="sub" x="12" y="44" data-fit="${NODE_W - 22}">${esc(sub)}</text><text class="sub" data-f="passed" x="12" y="60"></text>
       <g data-f="badges"></g><g data-f="counts" transform="translate(0,${NODE_H + 16})"></g></g>`;
   }).join("");
   svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--flow)"/></marker></defs>
     <g id="edges">${edges}</g><g id="nodes">${nodes}</g><g id="moving"></g><g id="fx"></g>`;
+  marqueeSvg(svg);
   svg.querySelectorAll(".node").forEach((el) => {
     el.addEventListener("click", (e) => {
       const badgeEl = e.target.closest("[data-badge]");
@@ -495,6 +533,7 @@ function openStages() {
   refreshStages();
 }
 function closeStages() {
+  if (!S.stagesOpen) return;
   S.stagesOpen = false;
   $("stages-drop").classList.remove("open");
   $("stages-drop").setAttribute("aria-hidden", "true");
@@ -517,9 +556,61 @@ function stageQuery() {
 async function refreshStages() {
   const rows = await api(`/api/lines/${S.lineId}/stages?${stageQuery()}`);
   $("stages").innerHTML = `<table><tr><th>этап</th><th class="num">изделий</th><th class="num">выполнений / проверок</th><th class="num">в работе</th><th class="num">доработок</th><th class="num">длительность</th><th class="num">откл. станка</th><th class="num">обнаружено</th><th class="num">возникло</th><th class="num">без признаков</th></tr>
-    ${rows.map((r) => { const op = r.kind === "operation"; return `<tr class="click" data-node="${esc(r.node_id)}"><td>${op ? "⚙" : "◉"} ${esc(r.title)}</td><td class="num">${r.items}</td><td class="num">${op ? r.runs : r.checks}</td><td class="num">${op ? r.in_progress : "—"}</td><td class="num">${op ? r.rework_runs : "—"}</td><td class="num">${op ? mins(r.median_reported_s ?? r.median_active_s) : "—"}</td><td class="num">${op ? r.deviations : "—"}</td><td class="num">${op ? "—" : r.first_detections ? badge(r.first_detections, "bad") : 0}</td><td class="num">${r.defects_originated ? badge(r.defects_originated, "warn") : 0}</td><td class="num">${op ? "—" : pct(r.pass_rate)}</td></tr>`; }).join("")}</table>`;
+    ${rows.map((r) => {
+      const op = r.kind === "operation";
+      const median = r.median_reported_s ?? r.median_active_s;
+      return `<tr class="click" data-node="${esc(r.node_id)}"><td>${op ? "⚙" : "◉"} ${esc(r.title)}</td><td class="num">${r.items}</td><td class="num">${op ? r.runs : r.checks}</td><td class="num">${op ? r.in_progress : "—"}</td>
+        ${op ? gcell(r.rework_runs, "rework", ratio(r.rework_runs, r.runs)) : `<td class="num">—</td>`}
+        ${op ? gcell(mins(median), "duration", median == null ? null : ratio(median, r.norm_duration_s)) : `<td class="num">—</td>`}
+        ${op ? gcell(r.deviations, "deviations", ratio(r.deviations, r.runs)) : `<td class="num">—</td>`}
+        ${op ? `<td class="num">—</td>` : gcell(r.first_detections, "found", ratio(r.found, r.checks))}
+        ${gcell(r.defects_originated, "originated", ratio(r.defects_originated, r.items))}
+        ${op ? `<td class="num">—</td>` : gcell(pct(r.pass_rate), "found", r.pass_rate == null ? null : 1 - r.pass_rate)}</tr>`;
+    }).join("")}</table>${gradeLegend()}`;
   $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.addEventListener("click", () => openNode(tr.dataset.node)));
 }
+
+// --- оценка показателей цветом ---------------------------------------------------------------------------------------
+
+// Четыре уровня вместо одного цвета: хорошо, терпимо, плохо, очень плохо. Пороги — верхние
+// границы первых трёх уровней, всё выше — «очень плохо». Пороги условные, для
+// демонстрации: на предприятии их задают технолог и ОТК под свой техпроцесс.
+const GRADES = [["good", "хорошо"], ["fair", "терпимо"], ["bad", "плохо"], ["critical", "очень плохо"]];
+const RULES = {
+  duration: { limits: [1.05, 1.2, 1.5], text: "медиана длительности к норме", fmt: (v) => `×${v.toFixed(2)}` },
+  rework: { limits: [0.02, 0.05, 0.1], text: "доля доработок среди выполнений", fmt: pct },
+  deviations: { limits: [0, 0.02, 0.05], text: "отклонений станка на выполнение", fmt: pct },
+  originated: { limits: [0.01, 0.03, 0.06], text: "дефектов, возникших здесь, на изделие", fmt: pct },
+  found: { limits: [0.02, 0.05, 0.1], text: "доля проверок с признаками дефекта", fmt: pct },
+  unassessable: { limits: [0.01, 0.03, 0.06], text: "доля проверок без оценки", fmt: pct },
+  open: { limits: [0, 2, 5], text: "несоответствий ждут решения", fmt: (v) => String(v) },
+};
+const ratio = (a, b) => (b ? a / b : null);
+
+function grade(rule, value) {
+  if (value == null || Number.isNaN(value)) return null;
+  const { limits } = RULES[rule];
+  return value <= limits[0] ? 0 : value <= limits[1] ? 1 : value <= limits[2] ? 2 : 3;
+}
+
+function gradeHint(rule, value) {
+  const r = RULES[rule];
+  const [a, b, c] = r.limits.map(r.fmt);
+  return `${r.text}: ${r.fmt(value)}. Хорошо — до ${a}, терпимо — до ${b}, плохо — до ${c}, выше — очень плохо (пороги условные).`;
+}
+
+// Плитка показателя с оценкой: цвет полосы и подпись уровня, порог — во всплывающей подсказке.
+function gkpi(value, label, rule = null, measure = null) {
+  const g = rule ? grade(rule, measure) : null;
+  if (g == null) return kpi(value, label);
+  const [key, word] = GRADES[g];
+  return `<div class="kpi graded g-${key}" title="${esc(gradeHint(rule, measure))}"><b>${esc(value)}</b><span>${esc(label)}</span><em>${word}</em></div>`;
+}
+const gradeLegend = () => `<div class="grade-legend">${GRADES.map(([k, w]) => `<span><i class="g-${k}"></i>${w}</span>`).join("")}<span class="muted">наведите на плитку — порог</span></div>`;
+const gcell = (content, rule, measure) => {
+  const g = grade(rule, measure);
+  return g == null ? `<td class="num">${content}</td>` : `<td class="num"><span class="gcell g-${GRADES[g][0]}" title="${esc(gradeHint(rule, measure))}">${content}</span></td>`;
+};
 
 // --- панель роли ----------------------------------------------------------------------------------------------------
 
@@ -539,6 +630,25 @@ function queueList(queue) {
     <button class="btn small" style="margin-top:6px" data-rollback="${esc(n.nc_id)}" data-at="${esc(n.first_detected_at)}" title="Показать линию в момент обнаружения">⟲ к моменту отказа</button></li>`).join("")}</ul>`;
 }
 
+// Состояние станка цветом: работа — зелёный, отклонение режима — красный, предупреждение —
+// жёлтый, остановка — серый. Полоса последних состояний показывает сбой без чтения чисел.
+const MACHINE_STATE = { running: ["var(--ok)", "в работе"], idle: ["var(--line)", "простой"], warning: ["var(--fair)", "предупреждение"], deviation: ["var(--bad)", "режим вне допуска"], stopped: ["var(--muted)", "остановка"] };
+const stateStrip = (states) => `<div class="strip">${states.map((st) => `<i style="background:${(MACHINE_STATE[st] || MACHINE_STATE.idle)[0]}" title="${esc((MACHINE_STATE[st] || [0, st])[1])}"></i>`).join("")}</div>`;
+
+const plural = (n, one, few, many) => {
+  const d = n % 10, h = n % 100;
+  return d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+};
+
+function machinesList(machines) {
+  if (!machines.length) return `<div class="empty">Станков нет.</div>`;
+  return `<ul class="list">${machines.map((m) => {
+    const g = grade("deviations", ratio(m.deviations, m.runs));
+    return `<li class="click" data-node="${esc(m.node_id)}"><div class="row spread"><b class="small">${esc(m.title)}</b>${m.deviations ? `<span class="gcell g-${GRADES[g ?? 3][0]}" title="${esc(gradeHint("deviations", ratio(m.deviations, m.runs)))}">${m.deviations} ${plural(m.deviations, "сбой", "сбоя", "сбоев")}</span>` : badge("без сбоев", "ok")}</div>
+      <div class="muted small">${esc(m.stage)} · ${esc(m.equipment_id)}${m.last_deviation_at ? ` · последний ${time(m.last_deviation_at, true)}` : ""}</div>${stateStrip(m.strip)}</li>`;
+  }).join("")}</ul>`;
+}
+
 function renderRolePanel() {
   const o = S.overview;
   if (!o) return;
@@ -556,11 +666,12 @@ function renderRolePanel() {
     const entries = Object.entries(o.origins_by_node);
     const max = Math.max(1, ...entries.map(([, v]) => v));
     html = `<div class="card-head"><h2>Где возникают дефекты</h2></div>${entries.length ? `<div class="bars">${entries.map(([node, v]) => `<div class="bar-row" data-origin-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b>${v}</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}
+      <h3>Сбои оборудования</h3>${machinesList(o.machines || [])}
       <h3>Гипотезы, не подтверждённые людьми</h3>${Object.keys(o.hypotheses).length ? `<ul class="plain">${Object.entries(o.hypotheses).map(([c, v]) => `<li>${esc(L.cause[c] || c)}: ${v}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
       <button class="btn small" data-ocel style="margin-top:10px">Выгрузка OCEL 2.0</button>`;
   } else if (role === "manager") {
     html = `<div class="card-head"><h2>Показатели линии</h2></div><div class="kpis">${kpi(k.items, "изделий")}${kpi(k.conforming, "годно")}${kpi(k.nonconforming, "с несоответствием", k.nonconforming ? "bad-text" : "")}${kpi(k.rework_runs, "доработок")}${kpi(k.open_nonconformances, "ждут решения")}${kpi(k.confirmed, "подтверждено")}</div>
-      <div class="stack" style="margin-top:12px"><button class="btn" data-open="economics">Экономика линии</button>${can("line_manage") ? `<button class="btn" data-open="edit-line">Изменить линию</button>` : ""}${can("emulate") ? `<a class="btn" href="/emulator" target="_blank" rel="noopener">Пульт эмулятора ↗</a>` : ""}</div>`;
+      <div class="stack" style="margin-top:12px">${can("line_manage") ? `<button class="btn" data-open="edit-line">Изменить линию</button>` : ""}${can("emulate") ? `<a class="btn" href="/emulator" target="_blank" rel="noopener">Пульт эмулятора ↗</a>` : ""}</div>`;
   } else {
     html = `<div class="card-head"><h2>Администрирование</h2></div><div class="stack">${ADMIN_SECTIONS.map(([s, t]) => `<button class="btn" data-admin="${s}">${t}</button>`).join("")}<button class="btn" data-open="edit-line">Изменить линию</button></div>
       <div class="kpis" style="margin-top:12px">${kpi(k.items, "изделий")}${kpi(k.open_nonconformances, "ждут решения")}</div>`;
@@ -615,13 +726,15 @@ async function openNode(nodeId) {
     const d = await api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery()}`);
     const s = d.stats;
     const op = s.kind === "operation";
+    const median = s.median_reported_s ?? s.median_active_s;
     const stats = op
-      ? `${kpi(s.runs, "выполнений")}${kpi(s.in_progress, "в работе")}${kpi(mins(s.median_reported_s ?? s.median_active_s), "длительность, медиана")}${kpi(s.rework_runs, "доработок")}${kpi(s.deviations, "отклонений станка")}${kpi(s.defects_originated, "дефектов возникло", s.defects_originated ? "origin-text" : "")}`
-      : `${kpi(s.checks, "проверок")}${kpi(pct(s.pass_rate), "без признаков")}${kpi(s.found, "с признаками", s.found ? "bad-text" : "")}${kpi(s.not_assessable, "оценка невозможна")}${kpi(s.first_detections, "впервые обнаружено")}${kpi(s.open_detections, "ждут решения")}`;
+      ? `${kpi(s.runs, "выполнений")}${kpi(s.in_progress, "в работе")}${gkpi(mins(median), `длительность, медиана (норма ${mins(s.norm_duration_s)})`, "duration", median == null ? null : ratio(median, s.norm_duration_s))}${gkpi(s.rework_runs, "доработок", "rework", ratio(s.rework_runs, s.runs))}${gkpi(s.deviations, "отклонений станка", "deviations", ratio(s.deviations, s.runs))}${gkpi(s.defects_originated, "дефектов возникло", "originated", ratio(s.defects_originated, s.items))}`
+      : `${kpi(s.checks, "проверок")}${gkpi(pct(s.pass_rate), "без признаков", "found", s.pass_rate == null ? null : 1 - s.pass_rate)}${gkpi(s.found, "с признаками", "found", ratio(s.found, s.checks))}${gkpi(s.not_assessable, "оценка невозможна", "unassessable", ratio(s.not_assessable, s.checks))}${kpi(s.first_detections, "впервые обнаружено")}${gkpi(s.open_detections, "ждут решения", "open", s.open_detections)}`;
     const operators = op && Object.keys(s.by_operator).length ? `<h3>Операторы</h3><table><tr><th>оператор</th><th class="num">выполнений</th><th class="num">подтв. ошибок</th></tr>${Object.entries(s.by_operator).map(([w, r]) => `<tr><td class="mono">${esc(w)}</td><td class="num">${r.runs}</td><td class="num">${r.confirmed_errors}</td></tr>`).join("")}</table>` : "";
-    drawer(`<div class="card-head"><h2>${op ? "⚙" : "◉"} ${esc(s.title)}</h2>${badge(op ? "станок" : "контроль", "plain")}</div>
+    drawer(`<div class="card-head"><h2>${op ? "⚙" : "◉"} ${esc(s.title)}</h2>${badge(op ? "операция" : "контроль", "plain")}</div>
       <div class="muted small mono" style="margin-bottom:10px">${esc(s.station_id)}${s.equipment_id ? ` · ${esc(s.equipment_id)}` : ""}${s.checkpoint_id ? ` · ${esc(s.checkpoint_id)}` : ""}</div>
-      <div class="kpis">${stats}</div>
+      <div class="kpis">${stats}</div>${gradeLegend()}
+      ${d.machine ? machinePanel(d.machine) : ""}
       ${d.detected.length ? `<h3 class="bad-text">Обнаружено здесь</h3><ul class="list">${d.detected.slice(0, 8).map(ncRow).join("")}</ul>` : ""}
       ${d.originated.length ? `<h3 class="origin-text">Возникло здесь (оценка системы)</h3><ul class="list">${d.originated.slice(0, 8).map(ncRow).join("")}</ul>` : ""}
       ${operators}
@@ -629,6 +742,34 @@ async function openNode(nodeId) {
     { node: nodeId, refresh: load });
   };
   await load();
+}
+
+// Станок этапа для технолога: полоса состояний и по графику на параметр режима. Зелёная
+// полоса — допуск из справочника оборудования, точки вне её — красные.
+function machinePanel(m) {
+  const readings = m.events.filter((e) => Object.keys(e.parameters).length);
+  const charts = Object.entries(m.parameters).map(([key, spec]) => {
+    const points = readings.filter((e) => e.parameters[key] != null).map((e) => ({ at: e.at, v: e.parameters[key], state: e.state }));
+    if (!points.length) return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="muted small">показаний нет</span></div></div>`;
+    const values = points.map((p) => p.v);
+    const lo = Math.min(spec.low, ...values), hi = Math.max(spec.high, ...values);
+    const pad = (hi - lo) * 0.12 || 1;
+    const W = 300, H = 64, y = (v) => H - ((v - (lo - pad)) / (hi - lo + 2 * pad)) * H;
+    const x = (i) => (points.length === 1 ? W / 2 : 6 + (i / (points.length - 1)) * (W - 12));
+    const outside = points.filter((p) => p.v < spec.low || p.v > spec.high);
+    const last = points[points.length - 1];
+    const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+    return `<div class="param"><div class="row spread"><b class="small">${esc(spec.title)}</b><span class="small ${last.v < spec.low || last.v > spec.high ? "bad-text" : ""}">сейчас ${last.v} ${esc(spec.unit)}</span></div>
+      <svg viewBox="0 0 ${W} ${H}" class="param-chart"><rect x="0" y="${y(spec.high)}" width="${W}" height="${Math.max(1, y(spec.low) - y(spec.high))}" class="band"/><path d="${line}" class="trace"/>
+        ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${p.v < spec.low || p.v > spec.high ? 3.5 : 2}" class="${p.v < spec.low || p.v > spec.high ? "out" : "in"}"><title>${time(p.at, true)} · ${p.v} ${esc(spec.unit)}</title></circle>`).join("")}</svg>
+      <div class="muted small">допуск ${spec.low}–${spec.high} ${esc(spec.unit)} · вне допуска ${outside.length} из ${points.length}</div></div>`;
+  }).join("");
+  const faults = m.events.filter((e) => e.state !== "running" && e.state !== "idle");
+  return `<h3>Станок</h3><div class="machine-card"><b>${esc(m.title)}</b><span class="muted small">${esc(m.type_title)}${m.processing ? ` · ${esc(m.processing)}` : ""} · ${esc(m.equipment_id)}</span></div>
+    <div class="muted small" style="margin:8px 0 4px">последние ${m.events.length} состояний · ${Object.entries(MACHINE_STATE).map(([, [c, w]]) => `<span class="dot" style="background:${c}"></span> ${w}`).join(" ")}</div>
+    ${stateStrip(m.events.map((e) => e.state))}
+    <div class="params">${charts || `<div class="empty">У станка нет параметров в справочнике.</div>`}</div>
+    ${faults.length ? `<h3>Сбои</h3><ul class="plain small">${faults.slice(-6).reverse().map((e) => `<li>${time(e.at, true)} · <b>${esc((MACHINE_STATE[e.state] || [0, e.state])[1])}</b>${e.message ? ` — ${esc(e.message)}` : ""}${Object.entries(e.parameters).filter(([k]) => m.parameters[k] && (e.parameters[k] < m.parameters[k].low || e.parameters[k] > m.parameters[k].high)).map(([k, v]) => ` · ${esc(m.parameters[k].title)} ${v} ${esc(m.parameters[k].unit)} при допуске ${m.parameters[k].low}–${m.parameters[k].high}`).join("")}</li>`).join("")}</ul>` : ""}`;
 }
 
 async function openBadge(nodeId, kind) {
@@ -747,8 +888,14 @@ function openGuide() {
         <p class="note">В прошлом решения не принимаются: карточку можно прочитать, решение — только в текущем моменте.</p></section>
       <section><h3>Очередь и откат к моменту отказа</h3><p>У контролёра слева — очередь несоответствий. <b>⟲ к моменту отказа</b> переносит всю линию в момент обнаружения и открывает карточку: видно, какие изделия где стояли и что показывали станки тогда.</p></section>
       <section><h3>Карточка несоответствия</h3><p>Три слоя, и они не смешиваются: исходные сообщения анализатора как пришли; разбор системы — этап, основания, альтернативы и недостающие сведения; решения людей отдельными записями журнала с автором и обоснованием.</p></section>
-      <section><h3>Этапы процесса и изделия</h3><p><b>Этапы процесса</b> в шапке раскрывает сверху таблицу по всем этапам с фильтрами по изделию, смене и периоду; скрывается той же кнопкой. <b>Изделия</b> — таблица с фильтрами по столбцам; изделие открывается маршрутом A → B → C.</p></section>
-      <section><h3>Новая линия и станки</h3><p><b>Новая линия</b> открывает блочный редактор: перетащите блоки «Контроль» и «Операция» на холст, соедините их от правого кружка к левому, задайте параметры справа. Два входа в одну операцию — сборка. Администратор добавляет станок в разделе «Оборудование».</p></section>
+      <section><h3>Этапы процесса и изделия</h3><p><b>Этапы процесса</b> в шапке раскрывает сверху таблицу по всем этапам с фильтрами по изделию, смене и периоду; экран линии при этом сдвигается вниз, а не перекрывается. Любая выплывающая панель закрывается той же кнопкой, крестиком или нажатием вне её. <b>Изделия</b> — таблица с фильтрами по столбцам; изделие открывается маршрутом A → B → C.</p></section>
+      <section><h3>Новая линия и станки</h3><p><b>Новая линия</b> открывает блочный редактор: перетащите блоки «Контроль» и «Операция» на холст, соедините их от правого кружка к левому, задайте параметры справа. Два входа в одну операцию — сборка.</p>
+        <ul><li>Операцию ставят на станок из справочника оборудования. Вместе со станком подтягиваются обработка, которую выполняет его тип, и виды дефектов, которые на нём возникают; лишние можно снять.</li>
+        <li>Виды дефектов у контроля выбираются из справочника с поиском — ничего не нужно вбивать руками.</li>
+        <li>Новый станок со всеми характеристиками — тип, дефекты, допуски параметров — заводит администратор: ☰ → «Оборудование и станки».</li>
+        <li>Экономика линии задаётся в одном месте — кнопкой «Экономика» в шапке линии.</li></ul></section>
+      <section><h3>Оценка показателей и сбои станка</h3><p>Показатели этапа окрашены по четырём уровням: <span class="gcell g-good">хорошо</span> <span class="gcell g-fair">терпимо</span> <span class="gcell g-bad">плохо</span> <span class="gcell g-critical">очень плохо</span>. Наведите на плитку — появится порог. Пороги условные, на предприятии их задают технолог и ОТК.</p>
+        <p>У операции справа — станок: полоса последних состояний (красное — режим вне допуска) и график каждого параметра режима с зелёной полосой допуска. У технолога слева — сбои всех станков линии.</p></section>
       <section><h3>Пульт эмулятора</h3><p>Эмуляция вынесена за пределы системы — в отдельный пульт (кнопка в шапке). Там линию запускают и останавливают, вносят дефект в выбранный этап и проигрывают прогон по данным контракта: сколько изделий, за сколько секунд, какие дефекты куда. Система видит эмулятор как обычные источники событий.</p></section>
       <section><h3>Коротко о частом</h3><dl><dt>Почему изделие «на рассмотрении», а не «брак»?</dt><dd>Сигнал анализатора — ещё не несоответствие: его подтверждает контролёр.</dd><dt>Почему система не называет виновного?</dt><dd>Оператор — участник операции. Ошибка оператора бывает только подтверждённой человеком.</dd></dl></section>
     </div>`);
@@ -764,7 +911,7 @@ function openAdmin(section) {
   const show = async (key) => {
     dialog.querySelectorAll("[data-sec]").forEach((b) => b.classList.toggle("active", b.dataset.sec === key));
     const body = dialog.querySelector("#admin-body");
-    try { body.innerHTML = await ADMIN[key](); ADMIN_BIND[key]?.(body, close); } catch (error) { body.innerHTML = `<p class="bad-text">${esc(error.message)}</p>`; }
+    try { body.innerHTML = await ADMIN[key](); await ADMIN_BIND[key]?.(body, close); } catch (error) { body.innerHTML = `<p class="bad-text">${esc(error.message)}</p>`; }
   };
   dialog.querySelectorAll("[data-sec]").forEach((b) => b.addEventListener("click", () => show(b.dataset.sec)));
   show(section);
@@ -773,9 +920,18 @@ function openAdmin(section) {
 const ADMIN = {
   async equipment() {
     const rows = await api("/api/admin/equipment");
-    return `<div class="card-head"><h3>Станки линий</h3><div class="row"><select id="add-line" aria-label="Линия">${S.lines.map((l) => `<option value="${esc(l.line_id)}">${esc(l.title)}</option>`).join("")}</select><button class="btn primary small" id="add-machine">＋ Добавить станок</button></div></div>
-      <p class="muted small">Новый станок добавляется блоком «Операция» в редакторе линии: задайте код станка, операторов, длительность и виды дефектов, соедините блок с соседними этапами и сохраните новую версию линии. Изменение линии пишется в журнал критических действий.</p>
-      <table><tr><th>линия</th><th>этап</th><th>станок</th><th>операторы</th><th class="num">норма</th><th>состояние</th><th class="num">отклонений</th><th></th></tr>${rows.map((r) => `<tr><td>${esc(r.line_id)}</td><td>${esc(r.stage)}</td><td class="mono">${esc(r.equipment_id)}</td><td class="mono small">${esc(r.operators.join(", "))}</td><td class="num">${r.duration_min} мин</td><td>${r.state ? badge(r.state, ["warning", "deviation", "stopped"].includes(r.state) ? "warn" : "plain") : "—"}</td><td class="num">${r.deviations}</td><td><button class="btn small" data-edit-line="${esc(r.line_id)}">изменить</button></td></tr>`).join("")}</table>`;
+    const st = { active: ["в работе", "ok"], maintenance: ["на обслуживании", "warn"], retired: ["списан", "plain"] };
+    return `<div class="card-head"><h3>Справочник оборудования</h3><button class="btn primary small" id="new-machine">＋ Новый станок</button></div>
+      <p class="muted small">Станок заводится здесь со всеми характеристиками: тип определяет обработку, виды дефектов и параметры режима; допуски параметров задаются у каждого станка. Руководитель в редакторе линии выбирает станок только из этого справочника. Каждое изменение пишется в журнал критических действий.</p>
+      <div id="machine-form"></div>
+      <div class="table-wrap"><table><tr><th>станок</th><th>тип · обработка</th><th>дефекты</th><th>допуски</th><th>где стоит</th><th>состояние</th><th class="num">сбоев</th><th></th></tr>${rows.map((r) => `<tr>
+        <td><b class="mono">${esc(r.equipment_id)}</b><div class="small">${esc(r.title)}</div><div class="muted small">инв. № ${esc(r.inventory_no || "—")}</div></td>
+        <td class="small">${esc(r.type_title)}<div class="muted">${esc(r.processing.join(", "))}</div></td>
+        <td class="small mono">${esc(r.defect_types.join(", "))}</td>
+        <td class="small">${Object.values(r.parameters).map((p) => `${esc(p.title)} ${p.low}–${p.high} ${esc(p.unit)}`).join("<br>")}</td>
+        <td class="small">${esc(r.used_in.join("; ") || "—")}</td>
+        <td>${badge(...st[r.status])}${r.state ? `<div class="muted small">${esc(r.state)}</div>` : ""}</td><td class="num">${r.deviations}</td>
+        <td><button class="btn small" data-machine="${esc(r.equipment_id)}">изменить</button></td></tr>`).join("")}</table></div>`;
   },
   async defects() {
     const rows = await api("/api/admin/defects");
@@ -813,16 +969,50 @@ const ADMIN = {
 };
 
 const ADMIN_BIND = {
-  equipment(body, close) {
-    body.querySelector("#add-machine").addEventListener("click", async () => {
-      const lineId = body.querySelector("#add-line").value;
-      close();
-      openEditor({ lines: S.lines, config: await api(`/api/lines/${lineId}`), addMachine: true, onSaved: afterSave });
-    });
-    body.querySelectorAll("[data-edit-line]").forEach((b) => b.addEventListener("click", async () => {
-      close();
-      openEditor({ lines: S.lines, config: await api(`/api/lines/${b.dataset.editLine}`), onSaved: afterSave });
-    }));
+  async equipment(body) {
+    const [catalog, rows] = await Promise.all([api("/api/catalog"), api("/api/admin/equipment")]);
+    const form = body.querySelector("#machine-form");
+    const open = (machine = null) => {
+      const editing = !!machine;
+      const m = machine || { equipment_id: "", title: "", machine_type: Object.keys(catalog.machine_types)[0], inventory_no: "", status: "active" };
+      let defects = machine ? [...machine.defect_types] : [...catalog.machine_types[m.machine_type].defect_types];
+      form.innerHTML = `<form class="form machine-form card"><h3>${editing ? `Станок ${esc(m.equipment_id)}` : "Новый станок"}</h3>
+        <div class="form-row"><label>Код станка<input name="equipment_id" value="${esc(m.equipment_id)}" ${editing ? "readonly" : ""} required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,47}" placeholder="CNC-03"></label>
+          <label>Название<input name="title" value="${esc(m.title)}" required placeholder="Фрезерный центр ЧПУ №3"></label>
+          <label>Инвентарный номер<input name="inventory_no" value="${esc(m.inventory_no)}"></label></div>
+        <div class="form-row two-col"><label>Тип станка<select name="machine_type" ${editing ? "disabled" : ""}>${Object.entries(catalog.machine_types).map(([k, t]) => `<option value="${k}" ${k === m.machine_type ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select></label>
+          <label>Состояние<select name="status">${[["active", "в работе"], ["maintenance", "на обслуживании"], ["retired", "списан"]].map(([k, t]) => `<option value="${k}" ${k === m.status ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
+        <div class="muted small" data-processing></div>
+        <div class="field"><span>Виды дефектов, которые возникают на станке</span><div data-picker></div></div>
+        <div data-params></div>
+        <div class="row"><button class="btn primary">${editing ? "Сохранить" : "Зарегистрировать станок"}</button><button type="button" class="btn" data-cancel>Отмена</button></div></form>`;
+      const f = form.querySelector("form");
+      const typeOf = () => f.machine_type.value;
+      const params = () => (editing ? m.parameters : catalog.machine_types[typeOf()].parameters);
+      const drawType = () => {
+        const t = catalog.machine_types[typeOf()];
+        f.querySelector("[data-processing]").textContent = `Обработка: ${t.processing.join(", ")}.`;
+        picker(f.querySelector("[data-picker]"), { options: catalog.defects.map((d) => ({ value: d.code, label: d.title, hint: d.code })), selected: defects, onChange: (v) => { defects = v; } });
+        f.querySelector("[data-params]").innerHTML = `<h3>Допуски параметров режима</h3><table><tr><th>параметр</th><th>ед.</th><th class="num">нижняя</th><th class="num">верхняя</th></tr>${Object.entries(params()).map(([k, p]) => `<tr><td>${esc(p.title)}</td><td>${esc(p.unit)}</td><td class="num"><input data-low="${k}" type="number" step="any" value="${p.low}" style="width:90px"></td><td class="num"><input data-high="${k}" type="number" step="any" value="${p.high}" style="width:90px"></td></tr>`).join("")}</table>`;
+      };
+      f.machine_type.addEventListener("change", () => { defects = [...catalog.machine_types[typeOf()].defect_types]; drawType(); });
+      drawType();
+      f.querySelector("[data-cancel]").addEventListener("click", () => { form.innerHTML = ""; });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const parameters = Object.fromEntries(Object.keys(params()).map((k) => [k, { low: Number(f.querySelector(`[data-low="${k}"]`).value), high: Number(f.querySelector(`[data-high="${k}"]`).value) }]));
+        const spec = { equipment_id: f.equipment_id.value, title: f.title.value, inventory_no: f.inventory_no.value, machine_type: typeOf(), status: f.status.value, defect_types: defects, parameters };
+        try {
+          await api(editing ? `/api/admin/equipment/${encodeURIComponent(spec.equipment_id)}` : "/api/admin/equipment", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
+          notify(editing ? `Станок ${spec.equipment_id} сохранён.` : `Станок ${spec.equipment_id} зарегистрирован — его можно ставить на линию.`);
+          body.innerHTML = await ADMIN.equipment();
+          ADMIN_BIND.equipment(body);
+        } catch (error) { notify(error.message, true); }
+      });
+      f.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    body.querySelector("#new-machine").addEventListener("click", () => open());
+    body.querySelectorAll("[data-machine]").forEach((b) => b.addEventListener("click", () => open(rows.find((r) => r.equipment_id === b.dataset.machine))));
   },
   db(body) {
     body.querySelectorAll("[data-table]").forEach((b) => b.addEventListener("click", async () => {

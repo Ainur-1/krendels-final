@@ -9,7 +9,7 @@
 | пользователь | `Authorization: Bearer <токен>`; токен подписан HMAC-SHA256 и имеет срок действия | все эндпоинты, кроме `/api/health` |
 | edge-источник | `X-Source-Id` и `X-Signature` — HMAC-SHA256 тела запроса ключом источника | `POST /api/events` |
 
-В демонстрационном режиме токен выдаёт `POST /api/auth/demo-login {"user_id": "ctrl-01"}`; список пользователей — `GET /api/users`. В рабочем режиме оба эндпоинта отключены, токен выдаёт администратор командой `scripts/keys.py token`.
+В демонстрационном режиме пароль совпадает с логином: `POST /api/auth/login {"user_id": "controller", "password": "controller"}`; для тестов оставлен `POST /api/auth/demo-login {"user_id": "controller"}`, список пользователей — `GET /api/users`. В рабочем режиме оба эндпоинта отключены, токен выдаёт администратор командой `scripts/keys.py token`.
 
 ## Эндпоинты
 
@@ -39,7 +39,7 @@
 | `PUT /api/lines/{id}/economics` | `line_manage` | параметры экономики линии |
 | `GET /api/lines/{id}/live` | `read` | граф с состоянием этапов, изделия в работе, тревоги, состояние эмуляции |
 | `GET /api/lines/{id}/stages[?item_type&shift&since&until]` | `read` | статистика всех этапов за срез |
-| `GET /api/lines/{id}/stages/{node}` | `read` | этап: статистика, изделия, несоответствия, возникшие и обнаруженные здесь |
+| `GET /api/lines/{id}/stages/{node}` | `read` | этап: статистика, изделия, несоответствия, возникшие и обнаруженные здесь; у операции — станок с допусками и последними показаниями |
 | `GET /api/lines/{id}/items[?item_type&status&stage&q]` | `read` | изделия линии с фильтрами по столбцам |
 | `GET /api/lines/{id}/overview` | `read` | сводка для панелей ролей |
 | `GET /api/lines/{id}/economics` | `read` | экономика линии |
@@ -53,7 +53,10 @@
 | `POST /api/lines/graph`, `PUT /api/lines/{id}/graph` | `line_manage` | линия из блочного редактора: блоки, связи, параметры блоков |
 | `POST /api/lines/{id}/runs` | `emulate` | прогон на существующей линии по данным контракта: изделия, время показа, вероятности по этапам, принудительные дефекты |
 | `GET /api/admin/db[?table=]` | `admin` | таблицы базы с числом строк и последние строки; секреты и шифротекст не показываются |
-| `GET /api/admin/roles`, `GET /api/admin/defects`, `GET /api/admin/equipment` | `admin` | матрица прав, справочник дефектов, станки линий |
+| `GET /api/admin/roles`, `GET /api/admin/defects` | `admin` | матрица прав, справочник дефектов |
+| `GET /api/admin/equipment` | `admin` | справочник станков: тип, обработка, дефекты, допуски параметров, где стоит, последнее состояние |
+| `POST /api/admin/equipment`, `PUT /api/admin/equipment/{id}` | `admin` | регистрация станка и изменение его паспорта, дефектов и допусков |
+| `GET /api/catalog` | `read` | справочники для редактора линии: виды дефектов, типы станков, станки |
 | `GET /emulator` | — | страница пульта эмулятора |
 
 ## Ошибки

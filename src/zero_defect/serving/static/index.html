@@ -4,19 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zero Defect</title>
-  <link rel="stylesheet" href="/static/styles.css?v=0.3.4">
+  <link rel="stylesheet" href="/static/styles.css?v=0.4.0">
 </head>
 <body>
   <section id="login" class="login hidden">
     <div class="login-box">
-      <h1>Zero Defect</h1>
-      <p class="lead">Прослеживаемость изделия и разбор несоответствий на производстве. Выберите роль: у каждой роли свой экран с тем, что ей нужно в первую очередь.</p>
-      <div id="role-cards" class="role-grid"></div>
+      <div class="brand login-brand"><div class="logo">Z</div><h1>Zero Defect</h1></div>
+      <p class="lead">Прослеживаемость изделия и разбор несоответствий на производстве.</p>
       <form id="password-form" class="login-form">
-        <label>Пользователь <input name="user_id" autocomplete="username" required></label>
+        <label>Логин <input name="user_id" autocomplete="username" required autofocus></label>
         <label>Пароль <input name="password" type="password" autocomplete="current-password" required></label>
         <button class="btn primary" type="submit">Войти</button>
       </form>
+      <!-- Демонстрационный вход по ролям: подставляет логин и пароль роли в форму выше.
+           При встраивании в систему предприятия блок удаляется целиком — вход остаётся. -->
+      <section id="demo-roles" class="demo-roles hidden">
+        <p class="muted small">Демонстрация: выберите роль — логин и пароль подставятся сами.</p>
+        <div id="role-cards" class="role-grid"></div>
+      </section>
     </div>
   </section>
 
@@ -33,7 +38,7 @@
     </header>
 
     <section id="stages-drop" class="dropdown" aria-hidden="true">
-      <div class="dropdown-inner">
+      <div class="dropdown-clip"><div class="dropdown-inner">
         <div class="card-head"><h2>Этапы процесса</h2><div class="row">
           <select id="f-type" aria-label="Тип изделия"></select>
           <select id="f-shift" aria-label="Смена"><option value="">все смены</option><option value="S1">смена S1</option><option value="S2">смена S2</option></select>
@@ -42,7 +47,7 @@
           <button id="stages-close" class="btn small">Скрыть ▲</button>
         </div></div>
         <div id="stages" class="table-wrap"></div>
-      </div>
+      </div></div>
     </section>
 
     <main id="plant-view" class="plant hidden"></main>
@@ -51,7 +56,7 @@
       <aside id="role-panel" class="card area-left"></aside>
       <section class="card area-graph">
         <div class="graph-toolbar">
-          <div class="row"><b id="line-title"></b><span id="moment-badge"></span></div>
+          <div class="row"><button id="left-toggle" class="btn small hidden" title="Администрирование" aria-label="Открыть панель администрирования">☰</button><b id="line-title"></b><span id="moment-badge"></span></div>
           <div class="row">
             <select id="product-filter" aria-label="Изделие"></select>
             <button class="btn small" data-zoom="in" title="Приблизить">＋</button>
@@ -73,6 +78,6 @@
     </main>
   </div>
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/static/app.js?v=0.3.4"></script>
+  <script type="module" src="/static/app.js?v=0.4.0"></script>
 </body>
 </html>

@@ -32,6 +32,7 @@ from zero_defect.integration.model import ExternalSystem
 from zero_defect.integration.registry import build_adapters
 from zero_defect.ledger.crypto import PROFILES
 from zero_defect.lines.emulator import LiveEmulator
+from zero_defect.lines.equipment import EquipmentStore
 from zero_defect.lines.store import LineStore
 from zero_defect.security.auth import PERMISSIONS, AuthError, Principal, issue_token
 from zero_defect.service import DecisionError, QualitySystem
@@ -73,6 +74,7 @@ def create_app(
         system, adapters if adapters is not None else build_adapters(settings), outbox
     )
     lines = LineStore(system.database)
+    equipment = EquipmentStore(system.database)
     demo = load_demo if load_demo is not None else settings.demo
     if demo and not system.ingest_summary()["accepted"]:
         # Демонстрационная база наполняется один раз, в пустой журнал: проверочные
@@ -100,6 +102,7 @@ def create_app(
     app.state.system = system
     app.state.hub = hub
     app.state.lines = lines
+    app.state.equipment = equipment
     app.state.emulator = emulator
 
     @app.exception_handler(AuthError)
@@ -376,8 +379,8 @@ def create_app(
     def ops_metrics(_: Principal = Depends(reader)) -> dict:
         return system.telemetry.snapshot()
 
-    lines_routes.register(app, system, lines, emulator, principal, reader)
-    admin_routes.register(app, system, lines, principal)
+    lines_routes.register(app, system, lines, equipment, emulator, principal, reader)
+    admin_routes.register(app, system, lines, equipment, principal)
 
     # --- интерфейс ------------------------------------------------------------------
 

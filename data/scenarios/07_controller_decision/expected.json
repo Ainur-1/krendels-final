@@ -13,8 +13,8 @@
           "close"
         ],
         "decision_authors": [
-          "ctrl-01",
-          "tech-01"
+          "controller",
+          "technologist"
         ],
         "stage": "operation",
         "candidate_operations": [

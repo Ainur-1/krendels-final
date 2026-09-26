@@ -1,14 +1,17 @@
 // Блочный редактор линии. Блок вытягивается из палитры на холст, соединяется с другим
 // блоком протягиванием от выхода (правый кружок) ко входу (левый кружок), параметры
 // задаются в правой панели. Сохранение отдаёт граф серверу, а тот проверяет его целиком:
-// цикл, связь в никуда или операция без длительности не сохранятся.
-import { api, esc, modal, notify } from "./common.js?v=0.3.4";
+// цикл, связь в никуда, незарегистрированный станок или чужой для станка дефект не
+// сохранятся. Станки берутся только из справочника оборудования: новый станок заводит
+// администратор. Экономика линии задаётся в одном месте — кнопкой «Экономика» на линии.
+import { api, esc, marquee, modal, notify, picker } from "./common.js?v=0.4.0";
 
 const BLOCK_W = 170, BLOCK_H = 74;
 const KINDS = {
   inspection: { title: "Контроль", icon: "◉", defaults: { duration_min: 2, defect_rate_pct: 0 } },
   operation: { title: "Операция", icon: "⚙", defaults: { duration_min: 8, defect_rate_pct: 3 } },
 };
+const STATUS = { active: "в работе", maintenance: "на обслуживании", retired: "списан" };
 
 function blankLine(lines) {
   const n = lines.length + 1;
@@ -27,14 +30,22 @@ function fromConfig(config) {
     nodes: config.nodes.map((n) => ({
       node_id: n.node_id, title: n.title, kind: n.kind, x: n.x * 1.25, y: n.y,
       duration_min: Math.round((n.duration_s / 60) * 10) / 10, defect_rate_pct: Math.round(n.defect_rate * 1000) / 10,
-      defect_types: n.defect_types, rework_types: n.rework_types, equipment_id: n.equipment_id, operators: n.operators,
+      defect_types: n.defect_types, rework_types: n.rework_types, equipment_id: n.equipment_id, processing: n.processing, operators: n.operators,
       checkpoint_kind: n.checkpoint_kind, item_type_id: n.item_type_id, origin: n.origin, output_type: n.output_type,
+      // Коды участка, операции и контрольной точки сохраняются: по ним к этапу привязана история.
+      station_id: n.station_id, operation_id: n.operation_id, checkpoint_id: n.checkpoint_id,
     })),
     edges: config.edges.map((e) => [...e]),
   };
 }
 
-export function openEditor({ lines, config = null, addMachine = false, onSaved }) {
+export async function openEditor({ lines, config = null, onSaved }) {
+  let catalog;
+  try { catalog = await api("/api/catalog"); } catch (error) { notify(error.message, true); return; }
+  const defects = Object.fromEntries(catalog.defects.map((d) => [d.code, d]));
+  const machines = Object.fromEntries(catalog.equipment.map((m) => [m.equipment_id, m]));
+  const defectOption = (code) => ({ value: code, label: `${defects[code]?.title || code}`, hint: code });
+
   const line = config ? fromConfig(config) : blankLine(lines);
   const editing = !!config;
   let selected = null;
@@ -45,21 +56,16 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
       <aside class="palette">
         <h3>Блоки</h3>
         <div class="palette-item" draggable="true" data-kind="inspection">◉ Контроль<span>входной, после операции, финальный</span></div>
-        <div class="palette-item" draggable="true" data-kind="operation">⚙ Операция<span>станок, операторы, длительность</span></div>
+        <div class="palette-item" draggable="true" data-kind="operation">⚙ Операция<span>станок из справочника, обработка, операторы</span></div>
         <p class="muted">Перетащите блок на холст. Соедините блоки, протянув линию от правого кружка к левому кружку следующего. Два входа в одну операцию — это сборка.</p>
         <h3>Линия</h3>
         <form id="ed-meta" class="form">
-          <label>Код линии<input name="line_id" value="${esc(line.line_id)}" ${editing ? "readonly" : ""} required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,31}"></label>
+          <label>Код линии<input name="line_id" value="${esc(line.line_id)}" ${editing ? "readonly" : ""} required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{0,31}"></label>
           <label>Название<input name="title" value="${esc(line.title)}" required></label>
           <label>Выпускаемое изделие<input name="product_type_id" value="${esc(line.product_type_id)}" required></label>
           <label>Такт, мин<input name="takt_min" type="number" min="0.5" step="0.5" value="${line.takt_min}"></label>
-          <details><summary class="muted">Экономика линии</summary>
-            <label>Стоимость годного, ₽<input name="item_value_rub" type="number" min="0" value="${line.economics.item_value_rub ?? 0}"></label>
-            <label>Стоимость доработки, ₽<input name="rework_cost_rub" type="number" min="0" value="${line.economics.rework_cost_rub ?? 0}"></label>
-            <label>Потери на браке, ₽<input name="scrap_cost_rub" type="number" min="0" value="${line.economics.scrap_cost_rub ?? 0}"></label>
-            <label>Стоимость часа участка, ₽<input name="hour_cost_rub" type="number" min="0" value="${line.economics.hour_cost_rub ?? 0}"></label>
-          </details>
         </form>
+        <p class="muted small">Экономика линии задаётся на экране линии кнопкой «Экономика».</p>
       </aside>
       <section class="canvas-wrap"><div id="ed-canvas" class="canvas"><svg id="ed-edges" class="canvas-edges"></svg></div></section>
       <aside id="ed-inspector" class="inspector"></aside>
@@ -77,7 +83,8 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
   function status() {
     const sources = line.nodes.filter((n) => !line.edges.some(([, t]) => t === n.node_id));
     const sinks = line.nodes.filter((n) => !line.edges.some(([s]) => s === n.node_id));
-    dialog.querySelector("#ed-status").textContent = `${line.nodes.length} этапов, ${line.edges.length} связей · входов ${sources.length}, выходов ${sinks.length}`;
+    const noMachine = line.nodes.filter((n) => n.kind === "operation" && !machines[n.equipment_id]).length;
+    dialog.querySelector("#ed-status").innerHTML = `${line.nodes.length} этапов, ${line.edges.length} связей · входов ${sources.length}, выходов ${sinks.length}${noMachine ? ` · <span class="bad-text">без станка: ${noMachine}</span>` : ""}`;
   }
 
   function drawEdges(temp = null) {
@@ -90,17 +97,24 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
     svg.querySelectorAll("[data-edge]").forEach((p) => p.addEventListener("click", (e) => { e.stopPropagation(); selected = { edge: Number(p.dataset.edge) }; renderInspector(); drawEdges(); }));
   }
 
+  function blockCaption(n) {
+    if (n.kind === "inspection") return `${n.duration_min} мин${n.defect_types.length ? ` · ${n.defect_types.join(", ")}` : ""}`;
+    const m = machines[n.equipment_id];
+    return m ? `${n.processing || "обработка не выбрана"} · ${m.equipment_id} · ${n.duration_min} мин` : "станок не выбран";
+  }
+
   function drawBlocks() {
     canvas.querySelectorAll(".block").forEach((b) => b.remove());
     for (const n of line.nodes) {
       const el = document.createElement("div");
-      el.className = `block ${n.kind} ${selected?.node === n.node_id ? "selected" : ""}`;
+      const missing = n.kind === "operation" && !machines[n.equipment_id];
+      el.className = `block ${n.kind} ${selected?.node === n.node_id ? "selected" : ""} ${missing ? "missing" : ""}`;
       el.style.left = `${n.x}px`;
       el.style.top = `${n.y}px`;
       el.dataset.node = n.node_id;
-      el.innerHTML = `<span class="port in" data-port="in"></span><b>${KINDS[n.kind].icon} ${esc(n.title)}</b>
-        <small>${n.duration_min} мин${n.kind === "operation" ? ` · ${esc(n.equipment_id || "станок не задан")}` : ""}${n.defect_rate_pct ? ` · дефект ${n.defect_rate_pct} %` : ""}</small><span class="port out" data-port="out"></span>`;
+      el.innerHTML = `<span class="port in" data-port="in"></span><b>${KINDS[n.kind].icon} ${esc(n.title)}</b><small>${esc(blockCaption(n))}</small><span class="port out" data-port="out"></span>`;
       canvas.appendChild(el);
+      el.querySelectorAll("b, small").forEach(marquee);
       bindBlock(el, n);
     }
     drawEdges();
@@ -150,12 +164,32 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
     counter += 1;
     let id = `${line.line_id}-B${String(counter).padStart(2, "0")}`;
     while (node(id)) { counter += 1; id = `${line.line_id}-B${String(counter).padStart(2, "0")}`; }
-    const n = { node_id: id, title: KINDS[kind].title, kind, x, y, defect_types: [], rework_types: [], operators: [], equipment_id: kind === "operation" ? `EQ-${id}` : null, checkpoint_kind: null, origin: "manufactured", ...KINDS[kind].defaults };
+    const n = { node_id: id, title: KINDS[kind].title, kind, x, y, defect_types: [], rework_types: [], operators: [], equipment_id: null, processing: null, checkpoint_kind: null, origin: "manufactured", ...KINDS[kind].defaults };
     line.nodes.push(n);
     selected = { node: id };
     drawBlocks();
     renderInspector();
     return n;
+  }
+
+  function redrawKeepSelection(n) {
+    drawBlocks();
+    canvas.querySelector(`[data-node="${CSS.escape(n.node_id)}"]`)?.classList.add("selected");
+  }
+
+  // Станок выбирается из справочника; вместе с ним этап получает обработку и дефекты его
+  // типа. Лишние дефекты можно снять, чужие для станка — не добавить.
+  function machineFields(n) {
+    const m = machines[n.equipment_id];
+    const byType = {};
+    for (const x of catalog.equipment) if (x.status !== "retired" || x.equipment_id === n.equipment_id) (byType[x.type_title] ??= []).push(x);
+    return `<label>Станок<select name="equipment_id"><option value="">— выберите станок —</option>${Object.entries(byType).map(([type, list]) => `<optgroup label="${esc(type)}">${list.map((x) => `<option value="${esc(x.equipment_id)}" ${x.equipment_id === n.equipment_id ? "selected" : ""}>${esc(x.equipment_id)} · ${esc(x.title)}${x.status !== "active" ? ` (${STATUS[x.status]})` : ""}</option>`).join("")}</optgroup>`).join("")}</select></label>
+      ${m ? `<div class="machine-card"><b>${esc(m.type_title)}</b><span class="muted small">инв. № ${esc(m.inventory_no || "—")} · ${STATUS[m.status]}</span></div>
+        <label>Обработка<select name="processing">${m.processing.map((p) => `<option ${p === n.processing ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></label>
+        <div class="field"><span>Виды дефектов на этой операции</span><div data-picker="defect_types"></div></div>
+        <div class="field"><span>Дефекты, которые дорабатываются</span><div data-picker="rework_types"></div></div>
+        <label>Операторы (через запятую)<input name="operators" value="${esc(n.operators.join(", "))}"></label>`
+      : `<p class="muted small">Нет нужного станка? Новый станок со всеми характеристиками заводит администратор в разделе «Оборудование и станки».</p>`}`;
   }
 
   function renderInspector() {
@@ -167,7 +201,7 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
     }
     const n = selected?.node && node(selected.node);
     if (!n) {
-      inspector.innerHTML = `<h3>Параметры блока</h3><p class="muted">Выберите блок на холсте — здесь появятся его параметры: название, длительность, вероятность дефекта, виды дефектов, станок и операторы.</p>`;
+      inspector.innerHTML = `<h3>Параметры блока</h3><p class="muted">Выберите блок на холсте — здесь появятся его параметры: название, длительность, станок и обработка, виды дефектов.</p>`;
       return;
     }
     const isSource = !line.edges.some(([, t]) => t === n.node_id);
@@ -176,22 +210,27 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
         <label>Название<input name="title" value="${esc(n.title)}"></label>
         <label>Длительность, мин<input name="duration_min" type="number" min="0.1" step="0.1" value="${n.duration_min}"></label>
         <label>${n.kind === "operation" ? "Вероятность дефекта на операции, %" : "Доля брака на входе, %"}<input name="defect_rate_pct" type="number" min="0" max="100" step="0.5" value="${n.defect_rate_pct}"></label>
-        <label>Виды дефектов (коды через запятую)<input name="defect_types" value="${esc(n.defect_types.join(", "))}" placeholder="BURR, CRACK"></label>
-        ${n.kind === "operation" ? `<label>Станок<input name="equipment_id" value="${esc(n.equipment_id || "")}"></label>
-          <label>Операторы (через запятую)<input name="operators" value="${esc(n.operators.join(", "))}"></label>
-          <label>Дефекты, которые дорабатываются<input name="rework_types" value="${esc(n.rework_types.join(", "))}"></label>`
-        : `<label>Вид контроля<select name="checkpoint_kind"><option value="">по месту в линии</option>${["incoming", "after_operation", "final"].map((k) => `<option value="${k}" ${n.checkpoint_kind === k ? "selected" : ""}>${{ incoming: "входной", after_operation: "после операции", final: "финальный" }[k]}</option>`).join("")}</select></label>`}
+        ${n.kind === "operation" ? machineFields(n)
+        : `<div class="field"><span>Виды дефектов</span><div data-picker="defect_types"></div></div>
+          <label>Вид контроля<select name="checkpoint_kind"><option value="">по месту в линии</option>${["incoming", "after_operation", "final"].map((k) => `<option value="${k}" ${n.checkpoint_kind === k ? "selected" : ""}>${{ incoming: "входной", after_operation: "после операции", final: "финальный" }[k]}</option>`).join("")}</select></label>`}
         ${isSource ? `<label>Тип изделия на входе<input name="item_type_id" value="${esc(n.item_type_id || "")}" placeholder="по умолчанию — изделие линии"></label>
           <label>Происхождение<select name="origin"><option value="manufactured" ${n.origin !== "purchased" ? "selected" : ""}>изготавливается</option><option value="purchased" ${n.origin === "purchased" ? "selected" : ""}>покупное</option></select></label>` : ""}
       </form>
       <button class="btn danger" id="del-node" style="margin-top:10px">Удалить блок</button>`;
-    inspector.querySelectorAll("#ed-node [name]").forEach((input) => input.addEventListener("input", () => {
+    bindPickers(n);
+    inspector.querySelectorAll("#ed-node [name]").forEach((input) => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => {
       const v = input.value;
-      if (["defect_types", "operators", "rework_types"].includes(input.name)) n[input.name] = v.split(",").map((x) => x.trim()).filter(Boolean);
+      if (input.name === "operators") n.operators = v.split(",").map((x) => x.trim()).filter(Boolean);
       else if (["duration_min", "defect_rate_pct"].includes(input.name)) n[input.name] = Number(v);
-      else n[input.name] = v || null;
-      drawBlocks();
-      canvas.querySelector(`[data-node="${CSS.escape(n.node_id)}"]`)?.classList.add("selected");
+      else if (input.name === "equipment_id") {
+        const m = machines[v];
+        n.equipment_id = v || null;
+        n.processing = m?.processing[0] || null;
+        n.defect_types = m ? [...m.defect_types] : [];
+        n.rework_types = [];
+        renderInspector();
+      } else n[input.name] = v || null;
+      redrawKeepSelection(n);
     }));
     inspector.querySelector("#del-node").addEventListener("click", () => {
       line.nodes = line.nodes.filter((x) => x.node_id !== n.node_id);
@@ -200,6 +239,30 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
       drawBlocks();
       renderInspector();
     });
+  }
+
+  function bindPickers(n) {
+    const box = (name) => inspector.querySelector(`[data-picker="${name}"]`);
+    const machine = machines[n.equipment_id];
+    const allowed = n.kind === "operation" ? machine?.defect_types || [] : catalog.defects.map((d) => d.code);
+    if (box("defect_types")) {
+      picker(box("defect_types"), {
+        options: allowed.map(defectOption), selected: n.defect_types,
+        empty: n.kind === "operation" ? "все дефекты этого станка уже выбраны" : "все виды уже выбраны",
+        onChange: (values) => {
+          n.defect_types = values;
+          n.rework_types = n.rework_types.filter((code) => values.includes(code));
+          redrawKeepSelection(n);
+          if (box("rework_types")) bindRework();
+        },
+      });
+    }
+    const bindRework = () => picker(box("rework_types"), {
+      options: n.defect_types.map(defectOption), selected: n.rework_types, placeholder: "выбрать из дефектов операции…",
+      empty: "сначала выберите виды дефектов",
+      onChange: (values) => { n.rework_types = values; },
+    });
+    if (box("rework_types")) bindRework();
   }
 
   dialog.querySelectorAll(".palette-item").forEach((item) => item.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/plain", item.dataset.kind)));
@@ -217,13 +280,13 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
     const meta = Object.fromEntries(new FormData(dialog.querySelector("#ed-meta")).entries());
     const spec = {
       line_id: meta.line_id, title: meta.title, product_type_id: meta.product_type_id, takt_min: Number(meta.takt_min), description: line.description,
-      economics: { item_value_rub: Number(meta.item_value_rub), rework_cost_rub: Number(meta.rework_cost_rub), scrap_cost_rub: Number(meta.scrap_cost_rub), hour_cost_rub: Number(meta.hour_cost_rub), shift_hours: line.economics.shift_hours ?? 12 },
+      economics: line.economics,
       nodes: line.nodes.map((n) => ({ ...n, x: Math.round(n.x / 1.25), y: Math.round(n.y) })),
       edges: line.edges,
     };
     try {
       await api(editing ? `/api/lines/${encodeURIComponent(line.line_id)}/graph` : "/api/lines/graph", { method: editing ? "PUT" : "POST", body: JSON.stringify(spec) });
-      notify(editing ? `Сохранена новая версия линии ${spec.line_id}.` : `Линия ${spec.line_id} создана.`);
+      notify(editing ? `Сохранена новая версия линии ${spec.line_id}.` : `Линия ${spec.line_id} создана. Задайте её экономику кнопкой «Экономика».`);
       close();
       onSaved?.(spec.line_id);
     } catch (error) { notify(error.message, true); }
@@ -238,11 +301,6 @@ export function openEditor({ lines, config = null, addMachine = false, onSaved }
     c.title = "Финальный контроль";
     line.edges.push([a.node_id, b.node_id], [b.node_id, c.node_id]);
     selected = null;
-  }
-  if (addMachine) {
-    const maxX = Math.max(0, ...line.nodes.map((n) => n.x));
-    const n = addBlock("operation", maxX + 60, 420);
-    n.title = "Новый станок";
   }
   drawBlocks();
   renderInspector();

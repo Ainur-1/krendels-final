@@ -146,6 +146,8 @@ def stage_stats(index: LineIndex, node: Node, state: State, settings, filters: F
         "station_id": node.station_id,
         "equipment_id": node.equipment_id,
         "checkpoint_id": node.checkpoint_id,
+        # Норма длительности нужна интерфейсу, чтобы оценить медиану: в норме или нет.
+        "norm_duration_s": node.duration_s,
     }
     originated = [
         nc
@@ -505,6 +507,7 @@ def live_view(index: LineIndex, state: State, window_s: float = 1800) -> dict:
                 "y": node.y,
                 "station_id": node.station_id,
                 "equipment_id": node.equipment_id,
+                "processing": node.processing,
                 "checkpoint_kind": node.checkpoint_kind,
                 "assembly": node.assembly,
                 "duration_s": node.duration_s,

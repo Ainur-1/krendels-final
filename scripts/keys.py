@@ -3,10 +3,10 @@
 
     uv run python scripts/keys.py init
     uv run python scripts/keys.py rotate --profile classic-v1
-    uv run python scripts/keys.py token ctrl-01
+    uv run python scripts/keys.py token controller
     uv run python scripts/keys.py source edge-cam-07
     uv run python scripts/keys.py list
-    uv run python scripts/keys.py password ctrl-01
+    uv run python scripts/keys.py password controller
 
 Ключи лежат в каталоге из настройки security.keys_dir, вне репозитория. Смена ключа не
 перешифровывает журнал: старые записи проверяются тем ключом, которым защищены.

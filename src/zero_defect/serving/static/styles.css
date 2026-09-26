@@ -12,6 +12,8 @@
   --ok-soft: #e1f3e8;
   --warn: #b86a00;
   --warn-soft: #fbefd9;
+  --fair: #a88a00;
+  --fair-soft: #f8f1cc;
   --bad: #c7362b;
   --bad-soft: #fbe4e1;
   --info: #5b4bc4;
@@ -29,7 +31,7 @@
   :root {
     --bg: #0f1319; --panel: #171d25; --panel-2: #1c232d; --text: #e3e8ef; --muted: #95a1b1;
     --line: #2a333f; --accent: #7d9cff; --accent-soft: #222c44; --ok: #55c688; --ok-soft: #173024;
-    --warn: #e7a846; --warn-soft: #362a15; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
+    --warn: #e7a846; --warn-soft: #362a15; --fair: #e2c64f; --fair-soft: #332d12; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
     --info-soft: #28243f; --origin: #f39a4c; --node-op: #1d2638; --node-qc: #1b2a24; --flow: #3d4b5e;
     color-scheme: dark;
   }
@@ -43,19 +45,24 @@ a { color: var(--accent); }
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
-/* --- вход ------------------------------------------------------------------------ */
+/* --- вход: логин и пароль по центру, под ними — демонстрационный выбор роли ------------ */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
-.login-box { width: min(980px, 100%); }
-.login h1 { font-size: 26px; margin: 0 0 4px; }
-.login .lead { color: var(--muted); margin: 0 0 20px; }
-.role-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.role-card { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 14px; cursor: pointer; display: grid; gap: 6px; transition: border-color .15s, transform .15s; }
-.role-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-.role-card b { font-size: 15px; }
-.role-card span { color: var(--muted); font-size: 13px; }
-.login-form { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.login-box { width: min(560px, 100%); display: grid; gap: 14px; justify-items: stretch; }
+.login-brand { justify-content: center; }
+.login h1 { font-size: 26px; margin: 0; }
+.login .lead { color: var(--muted); margin: 0; text-align: center; }
+.login-form { display: grid; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; width: min(360px, 100%); justify-self: center; }
 .login-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.login-form input { padding: 8px 10px; }
+.login-form .btn { padding: 8px 12px; }
+.demo-roles { border-top: 1px dashed var(--line); padding-top: 12px; text-align: center; }
+.demo-roles p { margin: 0 0 8px; }
+.role-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.role-card { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; cursor: pointer; display: grid; gap: 4px; transition: border-color .15s, transform .15s; }
+.role-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.role-card b { font-size: 14px; }
+.role-card span { color: var(--muted); font-size: 12px; }
 
 /* --- шапка ----------------------------------------------------------------------- */
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 16px; background: var(--panel);
@@ -259,7 +266,14 @@ svg.mini { width: 100%; height: 130px; background: var(--panel-2); border-radius
 
 /* линия: слева роль, в центре граф во всю ширину, под ним шкала времени; детали — выезжающая панель */
 .line-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-areas: "left graph" "left timeline";
-  gap: var(--gap); padding: var(--gap); align-items: start; max-width: 1920px; margin: 0 auto; }
+  gap: var(--gap); padding: var(--gap); align-items: start; max-width: 1920px; margin: 0 auto;
+  /* высокая панель роли не растягивает строку графа: лишняя высота уходит под шкалу времени */
+  grid-template-rows: auto 1fr;
+  transition: grid-template-columns .25s ease, column-gap .25s ease; }
+/* панель администратора свёрнута в ☰: колонка сжимается до нуля, поле линии занимает её место */
+.line-layout.left-closed { grid-template-columns: 0px minmax(0, 1fr); column-gap: 0; }
+.line-layout.left-closed .area-left { visibility: hidden; opacity: 0; padding: 0; border-width: 0; }
+.line-layout .area-left { transition: opacity .2s ease; }
 .area-left { grid-area: left; position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow: auto; }
 .area-graph { grid-area: graph; }
 .area-timeline { grid-area: timeline; }
@@ -297,14 +311,24 @@ svg .ball { stroke: var(--panel); stroke-width: 2; pointer-events: none; }
 #tl-range { width: 100%; accent-color: var(--accent); }
 .tl-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 
-/* этапы — выпадающая сверху панель */
-.dropdown { position: fixed; left: 0; right: 0; top: 52px; z-index: 9; transform: translateY(-110%); transition: transform .25s ease; pointer-events: none; }
-.dropdown.open { transform: translateY(0); pointer-events: auto; }
+/* этапы — выпадающая сверху панель в потоке страницы: раскрываясь, она сдвигает экран
+   линии вниз, а не ложится поверх. Высота анимируется через строку сетки 0fr → 1fr. */
+.dropdown { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
+.dropdown.open { grid-template-rows: 1fr; }
+.dropdown-clip { overflow: hidden; min-height: 0; }
 .dropdown-inner { max-width: 1400px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-top: none; border-radius: 0 0 var(--radius) var(--radius);
-  padding: 14px; box-shadow: 0 14px 30px rgba(0, 0, 0, .18); max-height: 60vh; overflow: auto; }
+  padding: 14px; max-height: 60vh; overflow: auto; opacity: 0; transform: translateY(-12px); transition: opacity .25s ease, transform .3s ease; }
+.dropdown.open .dropdown-inner { opacity: 1; transform: none; }
 
 /* окна */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(10, 14, 20, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(10, 14, 20, .45); display: grid; place-items: center; z-index: 20; padding: 16px; animation: fade-in .18s ease; }
+.modal-backdrop .modal { animation: pop-in .18s ease; }
+.modal-backdrop.closing { animation: fade-out .18s ease forwards; }
+.modal-backdrop.closing .modal { animation: pop-out .18s ease forwards; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes pop-in { from { transform: scale(.97) translateY(8px); } }
+@keyframes pop-out { to { transform: scale(.97) translateY(8px); } }
 .modal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); width: min(760px, 100%); max-height: calc(100vh - 32px);
   display: flex; flex-direction: column; outline: none; }
 .modal.wide { width: min(1400px, 100%); height: calc(100vh - 32px); }
@@ -365,3 +389,67 @@ svg .ball { stroke: var(--panel); stroke-width: 2; pointer-events: none; }
 .top { row-gap: 6px; }
 .top { column-gap: 10px; }
 .brand { margin-right: 0; }
+
+/* === версия 0.4: справочники, оценка цветом, бегущая строка ============================ */
+
+/* выбор нескольких значений с поиском */
+.picker { position: relative; }
+.picker-box { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: var(--panel); cursor: text; }
+.picker-box:focus-within { border-color: var(--accent); }
+.picker-chips { display: contents; }
+.picker-chip { display: inline-flex; align-items: center; gap: 2px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 12px; font-weight: 600; }
+.picker-chip button { border: none; background: none; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
+.picker-search { border: none; outline: none; flex: 1; min-width: 110px; padding: 3px 4px; background: transparent; }
+.picker-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 25; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .16); max-height: 240px; overflow: auto; }
+.picker-option { padding: 6px 10px; cursor: pointer; display: grid; }
+.picker-option:hover { background: var(--accent-soft); }
+.picker-option span { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.picker-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.machine-card { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.machine-form { margin-bottom: 12px; }
+.block.missing { border-color: var(--bad); border-style: dashed; }
+
+/* бегущая строка: текст шире блока едет по кругу */
+.mq-box { overflow: hidden; text-overflow: clip !important; }
+.mq-track { display: inline-flex; gap: 40px; animation: mq linear infinite; will-change: transform; }
+g.mq-track { animation: mq linear infinite; }
+@keyframes mq { to { transform: translateX(var(--d)); } }
+@media (prefers-reduced-motion: reduce) { .mq-track, g.mq-track { animation-duration: 0s !important; } }
+
+/* оценка показателей: хорошо / терпимо / плохо / очень плохо */
+.kpi.graded { border-left: 4px solid; position: relative; }
+.kpi.graded em { display: block; font-style: normal; font-size: 11px; font-weight: 700; margin-top: 2px; }
+.kpi.g-good { border-color: var(--ok); background: var(--ok-soft); } .kpi.g-good em, .kpi.g-good b { color: var(--ok); }
+.kpi.g-fair { border-color: var(--fair); background: var(--fair-soft); } .kpi.g-fair em, .kpi.g-fair b { color: var(--fair); }
+.kpi.g-bad { border-color: var(--origin); background: var(--warn-soft); } .kpi.g-bad em, .kpi.g-bad b { color: var(--origin); }
+.kpi.g-critical { border-color: var(--bad); background: var(--bad-soft); } .kpi.g-critical em, .kpi.g-critical b { color: var(--bad); }
+.gcell { display: inline-block; padding: 0 8px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+.gcell.g-good { background: var(--ok-soft); color: var(--ok); }
+.gcell.g-fair { background: var(--fair-soft); color: var(--fair); }
+.gcell.g-bad { background: var(--warn-soft); color: var(--origin); }
+.gcell.g-critical { background: var(--bad-soft); color: var(--bad); }
+.grade-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
+.grade-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.grade-legend i.g-good { background: var(--ok); } .grade-legend i.g-fair { background: var(--fair); }
+.grade-legend i.g-bad { background: var(--origin); } .grade-legend i.g-critical { background: var(--bad); }
+
+/* станок: полоса состояний и графики параметров с полосой допуска */
+.strip { display: flex; gap: 1px; height: 12px; margin-top: 6px; border-radius: 3px; overflow: hidden; background: var(--panel-2); }
+.strip i { flex: 1; min-width: 2px; }
+.params { display: grid; gap: 10px; margin-top: 10px; }
+.param { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
+.param-chart { width: 100%; height: auto; display: block; margin: 4px 0; }
+.param-chart .band { fill: var(--ok-soft); stroke: var(--ok); stroke-dasharray: 3 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.param-chart .trace { fill: none; stroke: var(--flow); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.param-chart circle.in { fill: var(--ok); }
+.param-chart circle.out { fill: var(--bad); stroke: var(--panel); stroke-width: 1; }
+/* на узком экране колонки одна: свёрнутая панель администратора просто не показывается */
+@media (max-width: 1100px) {
+  .line-layout.left-closed { grid-template-columns: minmax(0, 1fr); }
+  .line-layout.left-closed .area-left { display: none; }
+}
+/* поля панели параметров не шире самой панели: длинное название станка в списке её не распирает */
+.inspector select, .inspector input { width: 100%; }
+.machine-card { min-width: 0; overflow-wrap: anywhere; }

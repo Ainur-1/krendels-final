@@ -273,7 +273,7 @@ def controller_decision(b: Builder) -> None:
         "BURR",
         "кромка отверстия",
         "confirm",
-        "ctrl-01",
+        "controller",
         "заусенец подтверждён осмотром, высота 0,4 мм",
     )
     b.advance(1)
@@ -282,7 +282,7 @@ def controller_decision(b: Builder) -> None:
         "SCRATCH",
         "плоскость А",
         "request_recheck",
-        "ctrl-01",
+        "controller",
         "уверенность анализатора ниже порога",
     )
     b.advance(5)
@@ -296,7 +296,7 @@ def controller_decision(b: Builder) -> None:
         "SCRATCH",
         "плоскость А",
         "reject",
-        "ctrl-01",
+        "controller",
         "повторный контроль признаков не выявил",
     )
     b.decide(
@@ -304,7 +304,7 @@ def controller_decision(b: Builder) -> None:
         "BURR",
         "кромка отверстия",
         "confirm_cause",
-        "tech-01",
+        "technologist",
         "нарушен режим снятия фаски, предусмотренный техпроцессом",
         cause_category="operator_error",
     )
@@ -313,7 +313,7 @@ def controller_decision(b: Builder) -> None:
         "BURR",
         "кромка отверстия",
         "close",
-        "ctrl-01",
+        "controller",
         "устранено доработкой, повторный контроль чистый",
     )
     b.advance(8)

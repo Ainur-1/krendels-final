@@ -45,7 +45,7 @@ def test_everything_but_health_needs_a_token(client):
 
 
 def test_views_on_demo_data(client):
-    headers = login(client, "master-01")
+    headers = login(client, "master")
     line = client.get("/api/line", headers=headers).json()
     assert line["counters"]["quarantine"] == 4
     assert line["source_gaps"]
@@ -64,7 +64,7 @@ def test_views_on_demo_data(client):
 
 
 def test_missing_evidence_is_not_faked(client):
-    headers = login(client, "ctrl-01")
+    headers = login(client, "controller")
     cards = client.get("/api/nonconformances", headers=headers).json()
     porosity = next(card for card in cards if card["defect_type"] == "POROSITY")
     detail = client.get(f"/api/nonconformances/{porosity['nc_id']}", headers=headers).json()
@@ -72,16 +72,16 @@ def test_missing_evidence_is_not_faked(client):
 
 
 def test_master_cannot_decide_controller_can(client):
-    cards = client.get("/api/nonconformances", headers=login(client, "ctrl-01")).json()
+    cards = client.get("/api/nonconformances", headers=login(client, "controller")).json()
     target = next(card for card in cards if card["status"] == "reported")
     url = f"/api/nonconformances/{target['nc_id']}/decisions"
     body = {"action": "start_review", "reason": "беру в работу"}
-    assert client.post(url, json=body, headers=login(client, "master-01")).status_code == 403
-    response = client.post(url, json=body, headers=login(client, "ctrl-01"))
+    assert client.post(url, json=body, headers=login(client, "master")).status_code == 403
+    response = client.post(url, json=body, headers=login(client, "controller"))
     assert response.status_code == 200
     assert response.json()["card"]["status"] == "under_review"
     wrong = client.post(
-        url, json={"action": "close", "reason": "нельзя"}, headers=login(client, "ctrl-01")
+        url, json={"action": "close", "reason": "нельзя"}, headers=login(client, "controller")
     )
     assert wrong.status_code == 409
 
@@ -102,15 +102,15 @@ def test_signed_batch_from_edge_source(client):
 
 
 def test_admin_only_security_endpoints(client):
-    assert client.get("/api/integrity", headers=login(client, "ctrl-01")).status_code == 403
-    report = client.get("/api/integrity", headers=login(client, "admin-01")).json()
+    assert client.get("/api/integrity", headers=login(client, "controller")).status_code == 403
+    report = client.get("/api/integrity", headers=login(client, "administrator")).json()
     assert report["ok"] is True
-    audit = client.get("/api/audit", headers=login(client, "admin-01")).json()
+    audit = client.get("/api/audit", headers=login(client, "administrator")).json()
     assert {"denied", "login"} <= {row["action"] for row in audit}
 
 
 def test_ocel_export(client):
-    data = client.get("/api/export/ocel", headers=login(client, "tech-01")).json()
+    data = client.get("/api/export/ocel", headers=login(client, "technologist")).json()
     assert {"objectTypes", "eventTypes", "objects", "events"} <= set(data)
     assert any(
         rel["qualifier"] == "performed_by"

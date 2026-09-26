@@ -1,7 +1,7 @@
 // Пульт эмулятора: отдельная страница, вынесенная за пределы системы. Отсюда линиями
 // управляют так, как управлял бы стенд: пуск, остановка, дефект в выбранный этап и
 // прогон по данным контракта. Система видит всё это обычными событиями источников.
-import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.3.4";
+import { $, L, api, badge, can, esc, login, notify, poller, session } from "./common.js?v=0.4.0";
 
 let lines = [];
 let configs = {};
@@ -14,7 +14,8 @@ async function start() {
     return;
   }
   try { await login(session.token); } catch { location.href = "/"; return; }
-  $("user-chip").innerHTML = `${esc(session.me.name)} · <b>${esc(L.role[session.me.role])}</b>`;
+  $("user-chip").innerHTML = `<b>${esc(L.role[session.me.role])}</b>`;
+  $("user-chip").title = `${session.me.name} (${session.me.user_id})`;
   if (!can("emulate")) {
     document.querySelector("main").innerHTML = `<section class="card"><p>У роли «${esc(L.role[session.me.role])}» нет права управлять эмуляцией.</p></section>`;
     return;

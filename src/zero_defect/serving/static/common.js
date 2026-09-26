@@ -11,7 +11,7 @@ export const rub = (v) => (v == null ? "—" : `${Math.round(v).toLocaleString("
 export const badge = (text, tone = "plain") => `<span class="badge ${tone}">${esc(text)}</span>`;
 
 export const L = {
-  role: { controller: "контролёр ОТК", master: "мастер участка", technologist: "технолог", manager: "руководитель производства", admin: "администратор", edge: "источник событий" },
+  role: { controller: "Контролёр ОТК", master: "Мастер участка", technologist: "Технолог", manager: "Руководитель производства", admin: "Администратор", edge: "Источник событий" },
   status: { conforming: ["годно", "ok"], nonconforming: ["несоответствие", "bad"], suspect: ["на рассмотрении", "bad"], not_assessable: ["оценка невозможна", "warn"], in_progress: ["в работе", "info"], unknown: ["нет данных", "plain"] },
   nc: { reported: ["сообщение о признаке", "warn"], under_review: ["рассматривается", "info"], recheck_requested: ["доп. проверка", "info"], confirmed: ["подтверждено", "bad"], rejected: ["отклонено", "plain"], closed: ["закрыто", "ok"] },
   stage: { incoming: "входной брак", operation: "возникло на операции", between_checks: "между проверками", unknown: "этап не установлен" },
@@ -96,17 +96,109 @@ export function poller(fn, ms) {
   return { stop() { stopped = true; clearInterval(id); document.removeEventListener("visibilitychange", onVisible); }, now: run };
 }
 
+// Окно поверх экрана. Закрывается крестиком, Esc или нажатием вне окна — плавно: сначала
+// гаснет, потом удаляется, чтобы закрытие не выглядело обрывом.
 export function modal(html, { wide = false, onClose } = {}) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = `<div class="modal ${wide ? "wide" : ""}" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   document.body.appendChild(backdrop);
   const dialog = backdrop.firstElementChild;
-  const close = () => { backdrop.remove(); window.removeEventListener("keydown", onKey); onClose?.(); };
-  const onKey = (e) => { if (e.key === "Escape") close(); };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    window.removeEventListener("keydown", onKey);
+    backdrop.classList.add("closing");
+    setTimeout(() => { backdrop.remove(); onClose?.(); }, 180);
+  };
+  // Esc закрывает только верхнее окно: над редактором может быть открыто ещё одно.
+  const onKey = (e) => { if (e.key === "Escape" && backdrop === [...document.querySelectorAll(".modal-backdrop")].pop()) close(); };
   window.addEventListener("keydown", onKey);
   backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) close(); });
   dialog.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", close));
   dialog.focus();
   return { dialog, close };
+}
+
+// Выбор нескольких значений из справочника с поиском: выбранное — метками, остальное —
+// выпадающим списком под полем поиска. Enter берёт первое найденное, Backspace в пустом
+// поле снимает последнее выбранное.
+export function picker(root, { options, selected = [], placeholder = "найти и добавить…", empty = "в справочнике больше ничего нет", onChange }) {
+  let chosen = selected.filter((v) => options.some((o) => o.value === v));
+  root.classList.add("picker");
+  root.innerHTML = `<div class="picker-box"><span class="picker-chips"></span><input class="picker-search" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"></div><div class="picker-list hidden" role="listbox"></div>`;
+  const chips = root.querySelector(".picker-chips"), input = root.querySelector(".picker-search"), list = root.querySelector(".picker-list");
+  const label = (v) => options.find((o) => o.value === v);
+  const renderChips = () => {
+    chips.innerHTML = chosen.map((v) => `<span class="picker-chip" title="${esc(label(v)?.hint || "")}">${esc(label(v)?.label || v)}<button type="button" data-drop="${esc(v)}" aria-label="Убрать">×</button></span>`).join("");
+    chips.querySelectorAll("[data-drop]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); set(chosen.filter((v) => v !== b.dataset.drop)); }));
+  };
+  const matches = () => {
+    const q = input.value.trim().toLowerCase();
+    return options.filter((o) => !chosen.includes(o.value) && (!q || `${o.value} ${o.label} ${o.hint || ""}`.toLowerCase().includes(q)));
+  };
+  const renderList = () => {
+    const found = matches();
+    list.innerHTML = found.length
+      ? found.map((o) => `<div class="picker-option" data-pick="${esc(o.value)}" role="option"><b>${esc(o.label)}</b>${o.hint ? `<span>${esc(o.hint)}</span>` : ""}</div>`).join("")
+      : `<div class="picker-empty">${esc(input.value ? "ничего не найдено" : empty)}</div>`;
+    list.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("mousedown", (e) => { e.preventDefault(); set([...chosen, el.dataset.pick]); input.value = ""; renderList(); }));
+  };
+  const set = (values) => { chosen = values; renderChips(); if (!list.classList.contains("hidden")) renderList(); onChange?.(chosen.slice()); };
+  input.addEventListener("focus", () => { list.classList.remove("hidden"); renderList(); });
+  input.addEventListener("blur", () => list.classList.add("hidden"));
+  input.addEventListener("input", renderList);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); const first = matches()[0]; if (first) { set([...chosen, first.value]); input.value = ""; renderList(); } }
+    if (e.key === "Backspace" && !input.value && chosen.length) set(chosen.slice(0, -1));
+    if (e.key === "Escape") { e.stopPropagation(); input.blur(); }
+  });
+  root.querySelector(".picker-box").addEventListener("click", () => input.focus());
+  renderChips();
+  return { get: () => chosen.slice() };
+}
+
+// Бегущая строка для текста, который не помещается в блок: две копии едут влево без
+// остановки, как на табло. Текст, который помещается, остаётся как есть.
+const MARQUEE_GAP = 40;
+const MARQUEE_SPEED = 35; // пикселей в секунду: читается и не мельтешит
+
+export function marquee(el) {
+  if (!el || el.dataset.mq || el.scrollWidth <= el.clientWidth + 1) return;
+  const width = el.scrollWidth;
+  const html = el.innerHTML;
+  el.dataset.mq = "1";
+  el.classList.add("mq-box");
+  el.innerHTML = `<span class="mq-track" style="--d:-${width + MARQUEE_GAP}px;animation-duration:${((width + MARQUEE_GAP) / MARQUEE_SPEED).toFixed(1)}s"><span>${html}</span><span aria-hidden="true">${html}</span></span>`;
+}
+
+export function marqueeSvg(svg) {
+  const ns = "http://www.w3.org/2000/svg";
+  const defs = svg.querySelector("defs");
+  svg.querySelectorAll("text[data-fit]").forEach((text, i) => {
+    const max = Number(text.dataset.fit);
+    const length = text.getComputedTextLength();
+    if (!length || length <= max) return;
+    const x = Number(text.getAttribute("x")), y = Number(text.getAttribute("y"));
+    const clip = document.createElementNS(ns, "clipPath");
+    clip.id = `mq-${Date.now().toString(36)}-${i}`;
+    const rect = document.createElementNS(ns, "rect");
+    Object.entries({ x, y: y - 16, width: max, height: 22 }).forEach(([k, v]) => rect.setAttribute(k, v));
+    clip.appendChild(rect);
+    defs.appendChild(clip);
+    const frame = document.createElementNS(ns, "g");
+    frame.setAttribute("clip-path", `url(#${clip.id})`);
+    const track = document.createElementNS(ns, "g");
+    track.setAttribute("class", "mq-track");
+    track.setAttribute("style", `--d:-${length + MARQUEE_GAP}px;animation-duration:${((length + MARQUEE_GAP) / MARQUEE_SPEED).toFixed(1)}s`);
+    text.replaceWith(frame);
+    frame.appendChild(track);
+    text.removeAttribute("data-fit");
+    track.appendChild(text);
+    const copy = text.cloneNode(true);
+    copy.setAttribute("x", x + length + MARQUEE_GAP);
+    copy.setAttribute("aria-hidden", "true");
+    track.appendChild(copy);
+  });
 }

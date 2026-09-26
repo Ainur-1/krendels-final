@@ -17,7 +17,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from zero_defect.config import DATA_DIR
+from zero_defect.history.projection import MACHINE_DEVIATIONS
+from zero_defect.lines.catalog import DEFECTS
 from zero_defect.lines.emulator import LiveEmulator
+from zero_defect.lines.equipment import MACHINE_TYPES, EquipmentStore
 from zero_defect.lines.flow import FlowFile, speed_for
 from zero_defect.lines.model import Economics, LineConfig, Node
 from zero_defect.lines.store import LineError, LineStore
@@ -39,6 +42,10 @@ from zero_defect.quality.nonconformance import CONFIRMED_STATUSES
 from zero_defect.security.auth import Principal
 from zero_defect.service import QualitySystem
 from zero_defect.serving import payloads
+
+# Сколько последних показаний станка отдавать в панель этапа: на графике параметра больше
+# не различить, а ответ остаётся лёгким.
+MACHINE_POINTS = 240
 
 
 class EmulationRequest(BaseModel):
@@ -88,11 +95,18 @@ class GraphNodeSpec(BaseModel):
     defect_types: list[str] = []
     rework_types: list[str] = []
     equipment_id: str | None = None
+    processing: str | None = None
     operators: list[str] = []
     checkpoint_kind: str | None = Field(default=None, pattern="^(incoming|after_operation|final)$")
     item_type_id: str | None = None
     origin: str = Field(default="manufactured", pattern="^(manufactured|purchased)$")
     output_type: str | None = None
+    # Коды участка, операции и контрольной точки. У существующей линии редактор передаёт
+    # их как есть: по ним события истории сопоставляются с этапами, и новая версия линии
+    # не должна терять уже накопленную историю. У нового блока они выводятся сами.
+    station_id: str | None = None
+    operation_id: str | None = None
+    checkpoint_id: str | None = None
 
 
 class GraphSpec(BaseModel):
@@ -118,6 +132,44 @@ class RunSpec(BaseModel):
     defects: list[dict] = []
 
 
+def apply_equipment(config: LineConfig, equipment: EquipmentStore) -> None:
+    """
+    Операции линии — только на станках из справочника. Тип станка переносится в этап,
+    обработка должна быть из тех, что станок этого типа выполняет, а дефекты — из тех,
+    что на нём возникают. Новый станок заводит администратор, не редактор линии.
+    """
+
+    problems = []
+    for node in config.nodes:
+        if node.kind != "operation":
+            continue
+        machine = equipment.get(node.equipment_id)
+        if machine is None:
+            problems.append(
+                f"этап «{node.title}»: станок {node.equipment_id or '—'} не зарегистрирован — "
+                "новый станок добавляет администратор"
+            )
+            continue
+        if machine.status == "retired":
+            problems.append(f"этап «{node.title}»: станок {machine.equipment_id} списан")
+        node.machine_type = machine.machine_type
+        processing = MACHINE_TYPES[machine.machine_type]["processing"]
+        if node.processing is None:
+            node.processing = processing[0]
+        elif node.processing not in processing:
+            problems.append(
+                f"этап «{node.title}»: {machine.title} не выполняет «{node.processing}»"
+            )
+        foreign = [code for code in node.defect_types if code not in machine.defect_types]
+        if foreign:
+            problems.append(
+                f"этап «{node.title}»: дефекты {', '.join(foreign)} не относятся к станку "
+                f"{machine.equipment_id}"
+            )
+    if problems:
+        raise LineError("; ".join(problems))
+
+
 def graph_to_config(spec: GraphSpec) -> LineConfig:
     """Граф из редактора → конфигурация линии. Идентификаторы участков выводятся сами."""
 
@@ -138,19 +190,24 @@ def graph_to_config(spec: GraphSpec) -> LineConfig:
                 node_id=block.node_id,
                 title=block.title,
                 kind=block.kind,
-                station_id=f"ST-{block.node_id}",
+                station_id=block.station_id or f"ST-{block.node_id}",
                 x=block.x,
                 y=block.y,
                 duration_s=block.duration_min * 60,
-                operation_id=f"OP-{block.node_id}" if block.kind == "operation" else None,
+                operation_id=(block.operation_id or f"OP-{block.node_id}")
+                if block.kind == "operation"
+                else None,
                 equipment_id=(block.equipment_id or f"EQ-{block.node_id}")
                 if block.kind == "operation"
                 else None,
+                processing=block.processing if block.kind == "operation" else None,
                 operators=block.operators
                 or ([f"OP-{block.node_id}"] if block.kind == "operation" else []),
                 assembly=block.kind == "operation" and merges,
                 output_type=(block.output_type or spec.product_type_id) if merges else None,
-                checkpoint_id=f"CP-{block.node_id}" if block.kind == "inspection" else None,
+                checkpoint_id=(block.checkpoint_id or f"CP-{block.node_id}")
+                if block.kind == "inspection"
+                else None,
                 checkpoint_kind=checkpoint_kind,
                 item_type_id=(block.item_type_id or spec.product_type_id) if is_source else None,
                 origin=block.origin,
@@ -290,12 +347,58 @@ def _filters(
 
 
 def register(
-    app: FastAPI, system: QualitySystem, lines: LineStore, emulator: LiveEmulator, principal, reader
+    app: FastAPI,
+    system: QualitySystem,
+    lines: LineStore,
+    equipment: EquipmentStore,
+    emulator: LiveEmulator,
+    principal,
+    reader,
 ) -> IndexCache:
     cache = IndexCache(system, lines)
 
     def manager(user: Principal = Depends(principal)) -> Principal:
         return user
+
+    def _machine_view(node, machine_events) -> dict | None:
+        """Станок этапа: паспорт из справочника и последние показания для технолога."""
+
+        if node.kind != "operation" or not node.equipment_id:
+            return None
+        machine = equipment.get(node.equipment_id)
+        spec = MACHINE_TYPES.get(node.machine_type or "", {})
+        events = machine_events.get(node.equipment_id, [])[-MACHINE_POINTS:]
+        return {
+            "equipment_id": node.equipment_id,
+            "title": machine.title if machine else node.equipment_id,
+            "machine_type": node.machine_type,
+            "type_title": spec.get("title", "тип не задан"),
+            "processing": node.processing,
+            "status": machine.status if machine else None,
+            "parameters": machine.parameters if machine else spec.get("parameters", {}),
+            "events": [
+                {
+                    "at": event.occurred_at.isoformat(),
+                    "state": event.machine_state,
+                    "parameters": event.parameters or {},
+                    "message": event.message,
+                }
+                for event in events
+            ],
+        }
+
+    @app.get("/api/catalog")
+    def catalog(_: Principal = Depends(reader)) -> dict:
+        """Справочники для редактора линии: дефекты, типы станков, станки."""
+
+        return {
+            "defects": [
+                {"code": code, "title": entry["title"], "method": entry["method"]}
+                for code, entry in DEFECTS.items()
+            ],
+            "machine_types": MACHINE_TYPES,
+            "equipment": [machine.to_dict() for machine in equipment.all()],
+        }
 
     @app.get("/api/lines")
     def list_lines(_: Principal = Depends(reader)) -> list[dict]:
@@ -405,6 +508,7 @@ def register(
             "originated": sorted(
                 originated, key=lambda card: card["first_detected_at"], reverse=True
             )[:30],
+            "machine": _machine_view(node, state.history.machine_events),
             "config": {
                 "duration_s": node.duration_s,
                 "defect_rate": node.defect_rate,
@@ -445,7 +549,7 @@ def register(
         deviations = []
         for node in index.config.nodes:
             for event in history.machine_events.get(node.equipment_id or "", [])[-50:]:
-                if event.machine_state in ("warning", "deviation", "stopped"):
+                if event.machine_state in MACHINE_DEVIATIONS:
                     deviations.append(
                         {
                             "node_id": node.node_id,
@@ -455,6 +559,27 @@ def register(
                             "at": event.occurred_at.isoformat(),
                         }
                     )
+        machines = []
+        for node in index.config.nodes:
+            if node.kind != "operation" or not node.equipment_id:
+                continue
+            events = history.machine_events.get(node.equipment_id, [])
+            bad = [event for event in events if event.machine_state in MACHINE_DEVIATIONS]
+            machine = equipment.get(node.equipment_id)
+            machines.append(
+                {
+                    "node_id": node.node_id,
+                    "stage": node.title,
+                    "equipment_id": node.equipment_id,
+                    "title": machine.title if machine else node.equipment_id,
+                    "runs": len(index.runs.get(node.node_id, [])),
+                    "deviations": len(bad),
+                    "last_state": events[-1].machine_state if events else None,
+                    "last_deviation_at": bad[-1].occurred_at.isoformat() if bad else None,
+                    # Полоса последних состояний: сбои видны глазом, без чтения чисел.
+                    "strip": [event.machine_state for event in events[-60:]],
+                }
+            )
         late = [
             event
             for event in history.events
@@ -487,6 +612,7 @@ def register(
                 if run.status == "in_progress"
             ][:25],
             "deviations": sorted(deviations, key=lambda entry: entry["at"], reverse=True)[:10],
+            "machines": machines,
             "origins_by_node": dict(sorted(origin_counts.items(), key=lambda pair: -pair[1])),
             "hypotheses": hypotheses,
             "source_gaps": {
@@ -672,7 +798,9 @@ def register(
         if lines.get(spec.line_id) is not None:
             raise HTTPException(409, f"линия {spec.line_id} уже есть")
         try:
-            config = lines.save(graph_to_config(spec), user.user_id)
+            config = graph_to_config(spec)
+            apply_equipment(config, equipment)
+            config = lines.save(config, user.user_id)
         except LineError as error:
             raise HTTPException(422, str(error)) from error
         return {"line_id": config.line_id, "version": config.version}
@@ -683,7 +811,9 @@ def register(
         if spec.line_id != line_id or lines.get(line_id) is None:
             raise HTTPException(404, f"линия {line_id} не найдена")
         try:
-            config = lines.save(graph_to_config(spec), user.user_id)
+            config = graph_to_config(spec)
+            apply_equipment(config, equipment)
+            config = lines.save(config, user.user_id)
         except LineError as error:
             raise HTTPException(422, str(error)) from error
         return {"line_id": config.line_id, "version": config.version}

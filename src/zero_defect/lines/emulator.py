@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from zero_defect.lines.equipment import machine_parameters
 from zero_defect.lines.model import LineConfig, Node
 from zero_defect.quality.nonconformance import nc_id_for
 
@@ -122,6 +123,7 @@ class Planner:
                 equipment_id=node.equipment_id,
                 line_id=self.config.line_id,
                 machine_state="running",
+                parameters=machine_parameters(node.machine_type, run_id, deviation=False),
             )
         duration = node.duration_s * (0.35 if previous_run else self.rng.uniform(0.85, 1.2))
         deviation = previous_run is None and (force == "deviation" or self.rng.random() < 0.03)
@@ -134,7 +136,10 @@ class Planner:
                 line_id=self.config.line_id,
                 machine_state="deviation",
                 message="параметр режима вне допуска",
-                parameters={"deviation_pct": round(self.rng.uniform(8, 25), 1)},
+                parameters={
+                    **machine_parameters(node.machine_type, run_id, deviation=True),
+                    "deviation_pct": round(self.rng.uniform(8, 25), 1),
+                },
             )
             self._emit(
                 at + self._dur(duration * 0.6),
@@ -143,6 +148,7 @@ class Planner:
                 equipment_id=node.equipment_id,
                 line_id=self.config.line_id,
                 machine_state="running",
+                parameters=machine_parameters(node.machine_type, f"{run_id}/2", deviation=False),
             )
         paused = 0.0
         if previous_run is None and self.rng.random() < 0.05:
@@ -446,30 +452,30 @@ def _decisions(planner: Planner, rng: random.Random, horizon: datetime) -> list[
             )
 
         if detection["confidence"] < 0.6:
-            decide(at, "request_recheck", "ctrl-01", "уверенность анализатора ниже порога")
+            decide(at, "request_recheck", "controller", "уверенность анализатора ниже порога")
             if rng.random() < 0.6:
                 decide(
                     at + timedelta(minutes=40),
                     "reject",
-                    "ctrl-01",
+                    "controller",
                     "повторный осмотр признака не подтвердил",
                 )
                 continue
         if rng.random() < 0.12:
             continue
-        decide(at + timedelta(minutes=45), "confirm", "ctrl-01", "признак подтверждён осмотром")
+        decide(at + timedelta(minutes=45), "confirm", "controller", "признак подтверждён осмотром")
         if defect.origin.startswith("reworked:"):
             decide(
                 at + timedelta(minutes=50),
                 "confirm_cause",
-                "tech-01",
+                "technologist",
                 "режим операции по техпроцессу нарушен",
                 "process_issue",
             )
             decide(
                 at + timedelta(minutes=55),
                 "close",
-                "ctrl-01",
+                "controller",
                 "устранено доработкой, повторный контроль чистый",
             )
             continue
@@ -483,7 +489,11 @@ def _decisions(planner: Planner, rng: random.Random, horizon: datetime) -> list[
             cause = "process_issue" if roll < 0.45 else "operator_error" if roll < 0.65 else None
         if cause:
             decide(
-                at + timedelta(minutes=80), "confirm_cause", "tech-01", "разбор с участком", cause
+                at + timedelta(minutes=80),
+                "confirm_cause",
+                "technologist",
+                "разбор с участком",
+                cause,
             )
     return steps
 
