@@ -440,8 +440,12 @@ class QualitySystem:
         by_item: dict[str, list[Nonconformance]] = {}
         for card in cards.values():
             by_item.setdefault(card.item_id, []).append(card)
+        draft = State(
+            history=history, cards=cards, statuses={}, metrics={}, unassessable_decisions=unclear
+        )
+        pending = frozenset(unresolved_unassessable(draft))
         statuses = {
-            item_id: item_status(item_id, history, cards, accepted, by_item)
+            item_id: item_status(item_id, history, cards, accepted, by_item, pending)
             for item_id in history.items
         }
         return State(
@@ -509,7 +513,11 @@ def unassessable_resolution(
 ) -> tuple[datetime | None, str | None]:
     """
     Когда и чем решена проблема «оценка невозможна»: допуском по ручному контролю или
-    следующим достоверным наблюдением того же изделия — что случилось раньше.
+    повторным достоверным контролем в той же контрольной точке — что случилось раньше.
+
+    Достоверное наблюдение на другом, более позднем этапе проблему не снимает: оно видит
+    изделие уже после следующих операций и не отвечает, что было в этой точке. Иначе
+    изделие с плохим снимком становилось годным без повторной проверки.
     """
 
     made = state.unassessable_decisions.get(UNASSESSABLE_PREFIX + observation.event.event_id, [])
@@ -520,6 +528,19 @@ def unassessable_resolution(
     options += [
         (other.occurred_at, "rechecked")
         for other in (item.observations if item else [])
-        if other.reliable and other.occurred_at > observation.occurred_at
+        if other.reliable
+        and other.occurred_at > observation.occurred_at
+        and other.event.checkpoint_id == observation.event.checkpoint_id
     ]
     return min(options, default=(None, None))
+
+
+def unresolved_unassessable(state: State) -> set[str]:
+    """Изделия, у которых есть нерешённая «оценка невозможна»."""
+
+    return {
+        observation.event.item_id
+        for observation in state.history.observations
+        if observation.effective_result == "not_assessable"
+        and unassessable_resolution(state, observation)[0] is None
+    }

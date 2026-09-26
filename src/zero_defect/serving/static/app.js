@@ -1,13 +1,13 @@
 // Интерфейс Zero Defect: обзор производства → линия. Всё содержимое выводится на экране
 // линии вокруг её графа: подробности — во вкладках под линией, этапы — в выпадающей сверху
 // панели, время — на шкале. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
-import { CONTRACT } from "./contract.js?v=0.5.3";
-import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.3";
-import { openEditor } from "./editor.js?v=0.5.3";
+import { CONTRACT } from "./contract.js?v=0.5.4";
+import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.4";
+import { openEditor } from "./editor.js?v=0.5.4";
 
 const GUIDE = {
   controller: ["Слева расположена очередь текущих проблем линии: сначала критичные, решённые внизу списка. Очередь не зависит от шкалы времени.", "Выбор проблемы переносит линию в момент её обнаружения и выделяет этап, на котором она обнаружена.", "Во вкладке «Изделие и проблема» слева показано изделие, справа проблема. Решение принимается справа с обязательным обоснованием и записывается отдельной записью журнала."],
-  master: ["Слева расположена очередь проблем линии, как у контролёра: сначала критичные, решённые внизу списка.", "По проблеме «Оценка невозможна» мастер назначает повторный контроль или допускает изделие по ручному контролю. Решение записывается отдельной записью журнала.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
+  master: ["Слева расположена очередь проблем линии, как у контролёра. Выбранная проблема поднимается наверх очереди.", "Мастер принимает решения по проблемам участка так же, как контролёр: подтверждает или отклоняет сигнал, назначает повторный контроль, закрывает несоответствие. По «Оценка невозможна» назначает повторный контроль или допускает изделие по ручному контролю.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
   technologist: ["Кнопка «Оборудование» в шапке открывает справочник станков. Новый станок регистрируется по типу, который описал администратор.", "Слева расположена очередь сбоев оборудования, состояние станков и подтверждённые несоответствия, по которым технолог устанавливает причину. Красный круг над этапом показывает действующий сбой станка.", "На шкале времени отмечены сбои станков (красным) и их возврат в работу (зелёным).", "Выбор станка открывает во вкладке «Этап» его показатели и графики параметров режима с полосой допуска."],
   manager: ["Обзор производства показывает все линии и выпускаемые изделия. Кнопка «Новая линия» открывает блочный редактор.", "Операция назначается на станок из справочника оборудования. Обработка и виды дефектов определяются типом станка.", "Кнопка «Экономика» в шапке линии открывает расчёт потерь и затрат на годное изделие."],
   admin: ["Главный экран администратора: «Администрирование». Здесь описываются типы станков и виды дефектов, заводятся роли и пользователи.", "Тип станка является шаблоном: обработка, виды дефектов и параметры режима с допусками. Конкретный станок по шаблону регистрирует технолог.", "Раздел «Производство» открывает линии. Режим «Смотреть как» открывает базовый экран выбранной роли, права администратора при этом сохраняются. Экран запоминается для каждой роли отдельно."],
@@ -278,8 +278,12 @@ const NODE_W = 160, NODE_H = 70, SX = 1.25, BADGE_R = 13;
 // становится несоответствием только после решения контролёра. Поэтому и цвета разные.
 const STATUS = [["in_progress", "var(--accent)", "В работе"], ["conforming", "var(--ok)", "Годно"], ["suspect", "var(--review)", "На рассмотрении"], ["nonconforming", "var(--bad)", "Несоответствие"], ["not_assessable", "var(--amber)", "Оценка невозможна"]];
 
+// Счётчики под этапом — о самом этапе: проблема обнаружена здесь, оценка невозможна здесь,
+// изделие ещё в работе или прошло этап без проблем. Красный и жёлтый сходятся с кругом.
+const STAGE_COUNTS = [["in_progress", "var(--accent)", "В работе"], ["ok", "var(--ok)", "Без проблем на этапе"], ["problem", "var(--bad)", "Проблема на этапе"], ["not_assessable", "var(--amber)", "Оценка невозможна на этапе"]];
+
 function renderLegend() {
-  $("graph-legend").innerHTML = `<span class="muted">Под этапом — изделия за промежуток по статусам:</span>${STATUS.map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}
+  $("graph-legend").innerHTML = `<span class="muted">Под этапом — изделия за промежуток:</span>${STAGE_COUNTS.map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}
     <span class="legend-sep"><i style="background:var(--bad)"></i>Над этапом — действующие проблемы на выбранный момент. Нажатие открывает их список.</span>`;
 }
 
@@ -388,7 +392,7 @@ function renderGraph(live) {
       ? `<g class="badge-g ${S.circle === raw.node_id ? "selected" : ""}" data-badge="problems" transform="translate(${NODE_W - BADGE_R + 4},-4)"><title>Действующих проблем: ${n} (${esc(problemsHint(raw))}). Нажмите, чтобы открыть список.</title><circle class="badge-ring" r="${BADGE_R + 4}"/><circle r="${BADGE_R}" fill="var(--bad)"/><text y="4" text-anchor="middle" class="count light">${text}</text></g>`
       : "";
     let cx = 2;
-    el.querySelector('[data-f="counts"]').innerHTML = STATUS.filter(([s]) => raw.counts[s]).map(([s, color, label]) => {
+    el.querySelector('[data-f="counts"]').innerHTML = STAGE_COUNTS.filter(([s]) => raw.counts[s]).map(([s, color, label]) => {
       const value = String(raw.counts[s]);
       const out = `<g class="count-pill"><title>${label}: ${value}</title><circle cx="${cx + 6}" cy="0" r="6" fill="${color}"/><text x="${cx + 16}" y="4" class="count">${value}</text></g>`;
       cx += 26 + value.length * 7;
@@ -444,7 +448,7 @@ async function loadCircle() {
   S.circleCount = data.active.length;
   const pop = $("circle-pop");
   const row = (p, resolved) => `<li class="problem ${resolved ? "resolved" : machines ? "sev-major" : problemClass(p)} ${focus()?.problem_id === p.problem_id ? "focused" : ""}" data-pop="${esc(p.problem_id)}">
-      <div class="row spread"><b class="small">${esc(p.title)}</b><span class="small">${resolved ? `Решено ${time(p.resolved_at, true)}` : p.resolved_now ? "Решено позднее" : esc(machines ? p.equipment_id : p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div>
+      <div class="row spread"><b class="small">${esc(p.title)}</b><span class="small">${resolved ? `Решено ${time(p.resolved_at, true)}` : esc(machines ? p.equipment_id : p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div>
       <div class="muted small">${machines ? `Станок <span class="mono">${esc(p.equipment_id)}</span>. ${esc(machineNote(p))}` : `Изделие <span class="mono">${esc(p.item_id)}</span>.`} Обнаружено ${time(p.at, true)}.</div></li>`;
   pop.innerHTML = `<div class="pop-head"><b>${esc(nodeTitle(nodeId))}</b><span class="muted small">На ${S.at ? time(S.at, true) : "текущий момент"}</span><button class="btn small" data-pop-close aria-label="Закрыть список">✕</button></div>
     <div class="pop-body">${data.active.length ? `<ul class="list">${data.active.map((p) => row(p, false)).join("")}</ul>` : `<div class="empty">Действующих проблем нет.</div>`}
@@ -629,12 +633,15 @@ function renderTimeline() {
   const current = lane();
   const f = focus();
   // В окно попадают только его отметки: при приближении DOM не растёт.
-  const markers = t.markers.map((m, i) => ({ ...m, i, ms: new Date(m.at).getTime() })).filter((m) => m.lane === current && !(S.hideResolved && m.kind === "resolved") && m.ms >= start && m.ms <= end);
+  // «Скрыть решённые» убирает решённую проблему целиком: и отметку обнаружения, и
+  // отметку решения. Решённость — на настоящее время.
+  const solved = S.hideResolved ? new Set(t.markers.filter((m) => m.kind === "resolved").map((m) => m.problem_id)) : null;
+  const markers = t.markers.map((m, i) => ({ ...m, i, ms: new Date(m.at).getTime() })).filter((m) => m.lane === current && !(solved && solved.has(m.problem_id)) && m.ms >= start && m.ms <= end);
   const zoom = (tlEnd() - tlStart()) / (end - start);
   const tick = (k) => time(new Date(start + (end - start) * k).toISOString(), end - start < 3600000);
   const legend = current === "items"
-    ? `<i class="m-bad"></i>Проблема <i class="m-amber"></i>Оценка невозможна${S.hideResolved ? "" : ` <i class="m-ok"></i>Решено`}`
-    : `<i class="m-bad"></i>Сбой станка${S.hideResolved ? "" : ` <i class="m-ok"></i>Станок в работе`}`;
+    ? `<i class="m-bad"></i>Проблема <i class="m-amber"></i>Оценка невозможна <span class="${S.hideResolved ? "off" : ""}"><i class="m-ok"></i>Решено</span>`
+    : `<i class="m-bad"></i>Сбой станка <span class="${S.hideResolved ? "off" : ""}"><i class="m-ok"></i>Станок в работе</span>`;
   // Возникновение и решение выбранной проблемы связаны линией: видно, сколько она действовала.
   const pair = f ? markers.filter((m) => m.problem_id === f.problem_id) : [];
   const link = pair.length === 2 ? `<div class="tl-link" style="left:${pos(new Date(pair[0].at).getTime())}%;width:${pos(new Date(pair[1].at).getTime()) - pos(new Date(pair[0].at).getTime())}%"></div>` : "";
@@ -649,7 +656,7 @@ function renderTimeline() {
         <button class="btn small ${S.at ? "" : "active"}" data-tl="live">Сейчас</button>
         <div class="seg" role="group" aria-label="Длина промежутка">${Object.entries(WINDOWS).map(([k, l]) => `<button class="btn small ${S.windowMode === k && !S.range.since ? "active" : ""}" data-window="${k}">${l}</button>`).join("")}</div>
         ${laneSwitch}
-        <button class="btn small ${S.hideResolved ? "active" : ""}" data-tl="hide" title="Скрыть зелёные отметки решённых проблем">${S.hideResolved ? "Показать решённые" : "Скрыть решённые"}</button>
+        <button class="btn small ${S.hideResolved ? "active" : ""}" data-tl="hide" title="Скрыть решённые проблемы целиком: отметки обнаружения и решения">Скрыть решённые</button>
         <div class="seg" role="group" aria-label="Масштаб шкалы"><button class="btn small" data-tlzoom="in" title="Приблизить шкалу к промежутку или выбранной проблеме. Колесо мыши над шкалой приближает к курсору">＋</button><button class="btn small" data-tlzoom="out" title="Отдалить шкалу">－</button><button class="btn small ${S.tlView ? "" : "active"}" data-tlzoom="fit" title="Вся история">⤢</button></div>
         ${S.tlView ? `<span class="muted small">×${zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}, Shift + колесо сдвигает шкалу</span>` : ""}
       </div>
@@ -811,6 +818,7 @@ function stopPlaying() {
 // Отметка на шкале: переход к её моменту, фокус на проблеме, подробности под линией.
 // Проблема изделия открывается вместе с изделием, сбой станка — во вкладке этапа.
 async function selectMarker(m) {
+  queueMicrotask(() => renderRolePanel());
   S.focusByLane[m.lane] = { lane: m.lane, problem_id: m.problem_id, node_id: m.node_id, item_id: m.item_id || null, at: m.at, title: m.title, kind: m.kind };
   selectNode(m.node_id);
   // Карточка открывается сразу, параллельно с переходом во времени: ждать пересборку
@@ -820,6 +828,7 @@ async function selectMarker(m) {
 
 // Проблема из очереди: фокус и переход к моменту обнаружения выполняются сразу.
 async function selectProblem(p) {
+  queueMicrotask(() => renderRolePanel());
   const where = p.kind === "machine" ? "machines" : "items";
   S.focusByLane[where] = { lane: where, problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
   if (!laneFixed()) S.lane = where;
@@ -972,8 +981,14 @@ function queueList(q, { machines = false, resolved: withResolved = true } = {}) 
       <div class="row spread"><b>${esc(p.title)}</b><span class="small">${esc(what(p, resolved))}</span></div>
       <div class="small">${machines ? `${esc(nodeTitle(p.node_id))}, станок <span class="mono">${esc(p.equipment_id)}</span>. ${esc(machineNote(p))}` : `Изделие <span class="mono">${esc(p.item_id)}</span>. ${esc(nodeTitle(p.node_id))}.`}</div>
       <div class="muted small">Обнаружено ${time(p.at, true)}${resolved ? `. Решено ${time(p.resolved_at, true)}` : ""}.</div></li>`;
-  const active = q.active.length ? `<ul class="list">${q.active.map((p) => row(p)).join("")}</ul>` : `<div class="empty">Действующих проблем нет.</div>`;
-  const done = `<h3>Решено · ${q.resolved_total}</h3>${q.resolved.length ? `<ul class="list">${q.resolved.slice(0, 15).map((p) => row(p, true)).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
+  // Выбранная проблема поднимается наверх очереди: сразу видно, что выбрано.
+  const all = [...q.active.map((p) => [p, false]), ...q.resolved.map((p) => [p, true])];
+  const picked = f && all.find(([p]) => p.problem_id === f.problem_id);
+  const pinned = picked ? `<div class="pinned"><div class="pop-sep">Выбрано</div><ul class="list">${row(...picked)}</ul></div>` : "";
+  const rest = q.active.filter((p) => p.problem_id !== f?.problem_id);
+  const active = pinned + (rest.length ? `<ul class="list">${rest.map((p) => row(p)).join("")}</ul>` : picked ? "" : `<div class="empty">Действующих проблем нет.</div>`);
+  const solved = q.resolved.filter((p) => p.problem_id !== f?.problem_id);
+  const done = `<h3>Решено · ${q.resolved_total}</h3>${solved.length ? `<ul class="list">${solved.slice(0, 15).map((p) => row(p, true)).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
   return withResolved ? active + done : active;
 }
 const resolvedList = (q, machines) => (q ? queueList({ active: [], resolved: q.resolved, resolved_total: q.resolved_total }, { machines }).replace(`<div class="empty">Действующих проблем нет.</div>`, "") : "");
@@ -1031,6 +1046,12 @@ function renderRolePanel(force = false) {
   if (!force && S.panelHtml === html) return;
   S.panelHtml = html;
   panel.innerHTML = html;
+  // Выбрана другая проблема — очередь прокручивается наверх, к закреплённой строке.
+  const picked = focus()?.problem_id || null;
+  if (picked !== S.pinnedShown) {
+    S.pinnedShown = picked;
+    if (picked) panel.scrollTop = 0;
+  }
   bindCommon(panel);
   panel.querySelectorAll("[data-problem]").forEach((el) => el.addEventListener("click", () => {
     const all = [S.queue, S.machineQueue].flatMap((q) => [...(q?.active || []), ...(q?.resolved || [])]);
@@ -1090,7 +1111,12 @@ function showTab(tab) {
   body.innerHTML = S.tabHtml?.[tab] || `<div class="tab-hint">${esc(hint)}</div>`;
   bindCommon(body);
   S.tabBind?.[tab]?.(body);
-  box.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  box.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+    // Таблица изделий и экономика загружаются нажатием на саму вкладку.
+    if (b.dataset.tab === "items") openItems();
+    else if (b.dataset.tab === "economics") openEconomics();
+    else showTab(b.dataset.tab);
+  }));
 }
 
 function details(tab, html, state = {}, bind = null) {
@@ -1112,7 +1138,7 @@ function renderPair({ quiet = false } = {}) {
     showTab("pair");
     return;
   }
-  details("pair", html, { pair: true, quiet, refresh: () => (S.pair.item ? loadItemSide(S.pair.item.id).then(() => renderPair({ quiet: true })) : null) }, bind);
+  details("pair", html, { pair: true, quiet }, bind);
 }
 
 async function openNode(nodeId) {
@@ -1167,9 +1193,11 @@ function machinePanel(m) {
 // Маршрут изделия в хронологии: каждое прохождение этапа — отдельный шаг. Проблемный
 // проход и повторный проход того же этапа не сливаются.
 async function loadItemSide(itemId) {
-  const path = await api(withAt(`/api/items/${encodeURIComponent(itemId)}/path`));
+  // История изделия всегда полная, на настоящее время: шкала её не обрезает, а только
+  // переносит внимание на момент шага.
+  const path = await api(`/api/items/${encodeURIComponent(itemId)}/path`);
   const visits = path.visits || [];
-  const chain = visits.map((v, i) => `<div class="hop vt-${v.label}"><div class="node-chip click" data-visit="${i}" title="${esc(v.at ? `Перейти к моменту ${time(v.at, true)}${v.problem_id ? " и открыть проблему" : ""}` : L.visit[v.label] || v.label)}"><b>${esc(v.title)}</b><span class="small">${esc(L.visit[v.label] || v.label)}</span>${v.at ? `<span class="muted small">${time(v.at, true)}</span>` : ""}</div><div class="arrow"></div></div>`).join("");
+  const chain = visits.map((v, i) => `<div class="hop vt-${v.label}"><div class="node-chip click" data-visit="${i}" data-problems="${esc((v.problem_ids || []).join(" "))}" title="${esc(v.at ? `Перейти к моменту ${time(v.at, true)}${v.problem_id ? " и открыть проблему" : ""}` : L.visit[v.label] || v.label)}"><b>${esc(v.title)}</b><span class="small">${esc(L.visit[v.label] || v.label)}</span>${v.at ? `<span class="muted small">${time(v.at, true)}</span>` : ""}</div><div class="arrow"></div></div>`).join("");
   const steps = path.route.map((n) => {
     const runs = n.runs.map((r) => `<div class="small">${r.rework ? badge("Доработка", "info") + " " : ""}Оператор <span class="mono">${esc(r.operator_id || "не указан")}</span>, ${time(r.started_at, true)}, ${mins(r.active_s)}</div>`).join("");
     const checks = n.checks.map((c) => `<div class="small">${badge(...(L.result[c.result] || [c.result]))} ${time(c.at, true)}, уверенность ${c.confidence ?? "не указана"}${c.reliable ? "" : " " + badge(c.note || "Недостоверно", "warn")}</div>`).join("");
@@ -1181,12 +1209,20 @@ async function loadItemSide(itemId) {
     <div class="route">${chain}</div>
     <div class="legend">${["passed", "possible_origin", "origin", "defect", "not_assessable", "rework", "ok", "pending"].map((k) => `<span class="vt-key vt-${k}"><i></i>${L.visit[k]}</span>`).join("")}</div>
     <h3>По этапам</h3><div class="steps">${steps}</div>`,
-  bind: (side) => side.querySelectorAll("[data-visit]").forEach((el) => el.addEventListener("click", () => selectVisit(itemId, visits[Number(el.dataset.visit)]))) };
+  bind: (side) => {
+    // Шаг выбранной проблемы обведён: история та же, внимание — на моменте проблемы.
+    const chosen = S.focusByLane.items?.problem_id;
+    side.querySelectorAll("[data-visit]").forEach((el) => {
+      el.classList.toggle("chosen", !!chosen && el.dataset.problems.split(" ").includes(chosen));
+      el.addEventListener("click", () => selectVisit(itemId, visits[Number(el.dataset.visit)]));
+    });
+  } };
 }
 
 // Шаг маршрута: линия переходит к моменту шага, этап выделяется; у шага с проблемой она
 // открывается справа — так же, как при выборе проблемы в очереди.
 async function selectVisit(itemId, v) {
+  queueMicrotask(() => renderRolePanel());
   selectNode(v.node_id);
   if (v.problem_id) {
     S.focusByLane.items = { lane: "items", problem_id: v.problem_id, node_id: v.node_id, item_id: itemId, at: v.at, title: v.problem_id.startsWith("NA-") ? "Оценка невозможна" : v.title, kind: "problem" };
@@ -1328,15 +1364,23 @@ async function openItems() {
   const load = async () => {
     const f = { ...S.itemFilters, item_type: S.itemFilters.item_type || S.itemType };
     const p = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
-    if (S.at) p.set("at", S.at);
+    // По умолчанию — все изделия линии на настоящее время. Кнопка оставляет только
+    // изделия с событиями внутри промежутка шкалы.
+    if (S.itemsInRange) {
+      p.set("since", new Date(sinceMs()).toISOString());
+      if (S.range.until) p.set("until", S.range.until);
+    }
     const data = await api(`/api/lines/${S.lineId}/items?${p}&limit=150`);
     const opt = (values, current, labels = {}) => `<option value="">Все</option>` + values.map((v) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(labels[v] || v)}</option>`).join("");
-    details("items", `<div class="card-head"><h2>Изделия линии</h2><span class="muted small">Найдено: ${data.total}${data.total > data.rows.length ? `, показано: ${data.rows.length}` : ""}</span></div>
+    details("items", `<div class="card-head"><h2>Изделия линии</h2><button class="btn small ${S.itemsInRange ? "active" : ""}" data-range-filter title="Оставить изделия с событиями внутри промежутка шкалы">Только за промежуток</button><span class="muted small">Найдено: ${data.total}${data.total > data.rows.length ? `, показано: ${data.rows.length}` : ""}</span></div>
       <div class="table-wrap"><table><tr><th>Изделие</th><th>Тип</th><th>Статус</th><th>Этап</th></tr>
         <tr class="filters"><th><input data-f="q" value="${esc(f.q)}" placeholder="Номер"></th><th><select data-f="item_type">${opt(data.facets.item_type, f.item_type)}</select></th>
           <th><select data-f="status">${opt(data.facets.status, f.status, Object.fromEntries(Object.entries(L.status).map(([k, v]) => [k, v[0]])))}</select></th><th><select data-f="stage">${opt(data.facets.stage, f.stage, data.stage_titles)}</select></th></tr>
         ${data.rows.map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td class="mono small">${esc(r.item_type_id)}</td><td>${badge(...(L.status[r.status] || [r.status]))}</td><td class="small">${esc(data.stage_titles[r.stage] || "—")}</td></tr>`).join("")}</table></div>`,
-    { items: true, refresh: load }, (body) => body.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => { S.itemFilters[el.dataset.f] = el.value; load(); })));
+    { items: true, refresh: () => (S.itemsInRange ? load() : null) }, (body) => {
+      body.querySelectorAll("[data-f]").forEach((el) => el.addEventListener("change", () => { S.itemFilters[el.dataset.f] = el.value; load(); }));
+      body.parentElement.querySelector("[data-range-filter]")?.addEventListener("click", () => { S.itemsInRange = !S.itemsInRange; load(); });
+    });
   };
   await load();
 }
@@ -1367,11 +1411,11 @@ function openGuide() {
       <section><h3>Роль «${esc(L.role[role])}»</h3><ol>${GUIDE[role].map((g) => `<li>${esc(g)}</li>`).join("")}</ol></section>
       <section><h3>Обзор производства</h3><p>Первый экран содержит все линии предприятия. Для каждой линии указаны схема, число изделий, операций в работе и проблем, ожидающих решения. Красная рамка обозначает линию с проблемами. Фильтр изделий сверху оставляет линии, выпускающие выбранное изделие.</p></section>
       <section><h3>Экран линии</h3><p>В центре расположен граф линии: этапы процесса и связи между ними. Колесо мыши изменяет масштаб, перетаскивание фона сдвигает граф, кнопка <b>⤢</b> вписывает граф целиком.</p>
-        <ul><li>Под каждым этапом указано число изделий, прошедших его за выбранный промежуток, по статусам: <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> годно, <span class="dot" style="background:var(--bad)"></span> несоответствие, <span class="dot" style="background:var(--amber)"></span> оценка невозможна.</li>
+        <ul><li>Под каждым этапом указано число изделий, прошедших его за выбранный промежуток: <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> без проблем на этапе, <span class="dot" style="background:var(--bad)"></span> проблема на этапе, <span class="dot" style="background:var(--amber)"></span> оценка невозможна на этапе. Красный и жёлтый счётчики сходятся с кругом над этапом. Проблема, решённая в любой момент, в том числе позже конца промежутка, считается решённой.</li>
         <li>Красный круг над этапом показывает число проблем, действующих на выбранный момент: у технолога это сбои станка, у остальных ролей проблемы изделий. Нажатие открывает список: действующие проблемы сверху, решённые за промежуток серым в конце. Выбранный круг обведён.</li>
         <li>Выбранная проблема выделяется кольцом вокруг этапа и подписью над графом при любом положении шкалы времени.</li></ul></section>
       <section><h3>Шкала времени</h3><p>Шкала задаёт промежуток двумя ползунками, промежуток целиком сдвигается перетаскиванием. Колесо мыши над шкалой приближает её к курсору, Shift и колесо сдвигают, кнопки ＋, －, ⤢ меняют масштаб. Граф показывает состояние линии на конец промежутка, числа под этапами и таблица этапов считаются внутри промежутка. Длина промежутка выбирается кнопками «Сутки», «Смена», «Всё время»; значение по умолчанию задаётся в конфигурации.</p>
-        <p>На шкале три цвета: красный означает проблему, жёлтый означает, что оценка невозможна, зелёный означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. У выбранной проблемы возникновение и решение соединены линией. Кнопка «Скрыть решённые» убирает зелёные отметки. Решение, принятое при просмотре прошлого, фиксируется текущим временем.</p></section>
+        <p>На шкале три цвета: красный означает проблему, жёлтый означает, что оценка невозможна, зелёный означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. У выбранной проблемы возникновение и решение соединены линией. Кнопка «Скрыть решённые» убирает решённые проблемы целиком: и отметку обнаружения, и отметку решения. Решение, принятое при просмотре прошлого, фиксируется текущим временем.</p></section>
       <section><h3>Подробности под линией</h3><p>Вкладки «Изделие и проблема», «Этап», «Изделия линии» и «Экономика» заполняются при выборе события. Во вкладке «Изделие и проблема» слева показано изделие, справа проблема; выбор другой проблемы обновляет изделие. Нажатие на шаг маршрута изделия переносит линию в момент этого шага и открывает его проблему. После решения проблема выделяется в очереди. Изделие, по которому принято решение, эмуляция ведёт дальше: после подтверждения дефекта операции — доработка и повторный контроль, после отклонения сигнала или закрытия — путь дальше по линии. Карточка несоответствия содержит три раздела: исходные сообщения анализатора, разбор системы и решения людей.</p></section>
       <section><h3>Этапы процесса</h3><p>Кнопка «Этапы процесса» раскрывает таблицу над графом. В каждой ячейке указано значение за выбранный промежуток и значение на текущий момент. Выбор этапа в таблице и на графе синхронизирован.</p></section>
       <section><h3>Новая линия и оборудование</h3><p>Администратор описывает типы станков и виды дефектов. Технолог регистрирует по типу конкретный станок. Руководитель в блочном редакторе назначает операцию на станок из справочника; обработка и виды дефектов определяются типом станка.</p></section>

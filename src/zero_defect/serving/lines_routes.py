@@ -479,8 +479,23 @@ def register(
     ) -> dict:
         index, state = cache.get(line_id, at)
         return {
-            **live_view(index, state, since=_moment(since) if since else None),
+            **live_view(
+                index,
+                state,
+                since=_moment(since) if since else None,
+                resolved_now=_resolved_now(line_id) if at else None,
+            ),
             "emulation": emulator.status(line_id),
+        }
+
+    def _resolved_now(line_id: str) -> set[str]:
+        """Проблемы, решённые к настоящему: в прошлом они тоже не считаются действующими."""
+
+        index, state = cache.get(line_id)
+        return {
+            p["problem_id"]
+            for p in line_problems(index, state) + machine_problems(index, state)
+            if p["resolved_at"]
         }
 
     @app.get("/api/lines/{line_id}/problems")
@@ -515,10 +530,13 @@ def register(
             and (item is None or p["item_id"] == item)
             and (problem is None or p["problem_id"] == problem)
         ]
-        done = set()
+        # Решённость — на настоящее время: проблема, решённая позже момента, в прошлом тоже
+        # показывается решённой, с датой решения.
+        done: dict[str, dict] = {}
         if at:
             now_index, now_state = cache.get(line_id)
-            done = {p["problem_id"] for p in source(now_index, now_state) if p["resolved_at"]}
+            done = {p["problem_id"]: p for p in source(now_index, now_state) if p["resolved_at"]}
+            found = [done.get(p["problem_id"], p) for p in found]
         start = _moment(since) if since else None
         rank = {"critical": 0, "major": 1, "minor": 2}
         active = sorted(
@@ -538,9 +556,7 @@ def register(
         limit = 200 if node or item or problem else 40
         return {
             "at": at,
-            "active": [
-                {**problem_payload(p), "resolved_now": p["problem_id"] in done} for p in active
-            ],
+            "active": [problem_payload(p) for p in active],
             "resolved": [problem_payload(p) for p in resolved[:limit]],
             "resolved_total": len(resolved),
         }
@@ -716,13 +732,27 @@ def register(
         status: str | None = None,
         stage: str | None = None,
         q: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
         limit: int = 200,
         _: Principal = Depends(reader),
     ) -> dict:
-        """Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру."""
+        """
+        Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру.
+
+        since и until оставляют изделия, у которых были события внутри промежутка шкалы.
+        Без них — все изделия линии: промежуток шкалы список не сужает, пока об этом не
+        попросили.
+        """
 
         index, state = cache.get(line_id, at)
         history = state.history
+        start = _moment(since) if since else None
+        end = _moment(until) if until else None
+        open_by_item: dict[str, int] = {}
+        for card in state.cards.values():
+            if card.is_open:
+                open_by_item[card.item_id] = open_by_item.get(card.item_id, 0) + 1
         rows = []
         for item_id, line in index.item_line.items():
             if line != line_id:
@@ -735,15 +765,17 @@ def register(
                 "stage": current_stage(index, item_id, state),
                 "parent_id": item.parent_id,
                 "work_order_id": item.work_order_id,
-                "open_nc": sum(
-                    1
-                    for card in state.cards.values()
-                    if card.item_id in {item_id, *item.components} and card.is_open
-                ),
+                "open_nc": sum(open_by_item.get(i, 0) for i in {item_id, *item.components}),
                 "last_at": max(
                     (history.events_by_id[e].occurred_at for e in item.event_ids), default=None
                 ),
             }
+            if start or end:
+                moments = [history.events_by_id[e].occurred_at for e in item.event_ids]
+                if not any(
+                    (start is None or m >= start) and (end is None or m <= end) for m in moments
+                ):
+                    continue
             if item_type and row["item_type_id"] != item_type:
                 continue
             if status and row["status"] != status:

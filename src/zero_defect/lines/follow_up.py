@@ -9,7 +9,8 @@
 - отклонение сигнала или закрытие несоответствия — изделие идёт дальше без доработки;
 - запрос повторного контроля — ещё один снимок в той же точке: признак подтвердится или
   нет;
-- повторный контроль по «оценка невозможна» — достоверный снимок, который её снимает.
+- по «оценка невозможна» повторный контроль — достоверный снимок в той же точке и путь
+  дальше, допуск по ручному контролю — путь дальше без снимка.
 
 Решение, которое изделие не держит (оно уже прошло дальше), событий не порождает. Ядро об
 эмуляции не знает: оно только сообщает слушателям о записанном решении.
@@ -47,7 +48,9 @@ def follow_decision(payload: dict, system, lines, cache, emulator: LiveEmulator)
     index, state = cache.get(line_id)
     item_type = index.item_types.get(item_id) or config.product_type_id
     if "event_id" in payload:
-        return _unassessable(payload, decision, config, state, item_id, item_type, emulator)
+        return _unassessable(
+            {**payload, "cache": cache}, decision, config, state, item_id, item_type, emulator
+        )
     card = state.cards.get(decision.nc_id)
     detected = index.detected_at.get(decision.nc_id)
     if card is None or detected is None or current_stage(index, item_id, state) != detected:
@@ -90,8 +93,11 @@ def follow_decision(payload: dict, system, lines, cache, emulator: LiveEmulator)
 
 
 def _unassessable(payload, decision, config, state, item_id, item_type, emulator) -> int:
-    if decision.action != "request_recheck":
-        return 0
+    """
+    Изделие с «оценка невозможна» ждёт у контрольной точки. Повторный контроль — снимок в
+    той же точке и путь дальше, допуск по ручному контролю — путь дальше без снимка.
+    """
+
     event_id = payload["event_id"]
     observation = next(
         (obs for obs in state.history.observations if obs.event.event_id == event_id), None
@@ -99,11 +105,18 @@ def _unassessable(payload, decision, config, state, item_id, item_type, emulator
     if observation is None:
         return 0
     node = config.inspection_node(observation.event.checkpoint_id, item_type)
-    if node is None:
+    index, state = payload["cache"].get(config.line_id)
+    if node is None or current_stage(index, item_id, state) != node.node_id:
         return 0
-    return emulator.follow_up(
-        config.line_id, lambda planner, at: planner.recheck(node, item_id, item_type, at)
-    )
+    ready = _ready_components(index, config, state, item_id, node)
+    recheck = decision.action == "request_recheck"
+
+    def plan(planner, at):
+        if recheck:
+            at = planner.recheck(node, item_id, item_type, at)
+        planner.resume(item_id, item_type, at, node, ready_components=ready)
+
+    return emulator.follow_up(config.line_id, plan)
 
 
 def _rework_node(index: LineIndex, config: LineConfig, nc_id: str) -> Node | None:

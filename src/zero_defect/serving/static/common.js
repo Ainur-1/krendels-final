@@ -12,7 +12,7 @@ export const badge = (text, tone = "plain") => `<span class="badge ${tone}">${es
 
 export const L = {
   role: { controller: "Контролёр ОТК", master: "Мастер участка", technologist: "Технолог", manager: "Руководитель производства", admin: "Администратор", edge: "Источник событий" },
-  status: { conforming: ["Годно", "ok"], nonconforming: ["Несоответствие", "bad"], suspect: ["На рассмотрении", "bad"], not_assessable: ["Оценка невозможна", "warn"], in_progress: ["В работе", "info"], unknown: ["Нет данных", "plain"] },
+  status: { conforming: ["Годно", "ok"], nonconforming: ["Несоответствие", "bad"], suspect: ["На рассмотрении", "review"], not_assessable: ["Оценка невозможна", "warn"], in_progress: ["В работе", "blue"], unknown: ["Нет данных", "plain"] },
   nc: { reported: ["Сигнал анализатора", "warn"], under_review: ["На рассмотрении", "info"], recheck_requested: ["Назначена повторная проверка", "info"], confirmed: ["Подтверждено", "bad"], rejected: ["Сигнал отклонён", "plain"], closed: ["Устранено", "ok"] },
   stage: { incoming: "Входной брак", operation: "Возникло на операции", between_checks: "Между проверками", unknown: "Этап не установлен" },
   conf: { strong: ["Основания достаточные", "ok"], moderate: ["Основания частичные", "warn"], insufficient: ["Сведений недостаточно", "bad"] },

@@ -710,6 +710,7 @@ def live_view(
     state: State,
     window_s: float = 1800,
     since: datetime | None = None,
+    resolved_now: set[str] | None = None,
 ) -> dict:
     """Состояние графа линии: этапы с тревогами, изделия и их статусы у каждого этапа.
 
@@ -719,9 +720,16 @@ def live_view(
     от этапа к этапу. Состояние бывает и на прошедший момент: тогда state построен из
     событий до этого момента, и «сейчас» — это он.
 
-    У этапа — изделия, которые прошли через него внутри промежутка шкалы (since — его
-    начало, конец — сам момент), по их статусу на этот момент, и проблемы, действующие на
-    этот момент: по изделиям и по станку этапа отдельно.
+    У этапа — проблемы, действующие на этот момент (по изделиям и по станку отдельно), и
+    изделия, прошедшие этап внутри промежутка шкалы (since — его начало, конец — сам
+    момент). Решённость проблемы берётся на настоящее время: resolved_now — проблемы, уже
+    решённые к настоящему, и в прошлом они тоже не считаются действующими, даже если
+    решение позже конца промежутка.
+
+    Счётчики изделий под этапом — о самом этапе, а не об итоге изделия: «проблема» —
+    действующее несоответствие или сигнал, обнаруженный здесь, «оценка невозможна» — здесь
+    же, остальные — в работе или прошли этап без проблем. Поэтому красный и жёлтый
+    счётчики сходятся с кругом над этапом, а сумма — с числом изделий за промежуток.
     """
 
     config = index.config
@@ -757,15 +765,28 @@ def live_view(
                 }
             )
             counts[node or "__entry"][status] += 1
+    done = resolved_now or set()
     open_problems: dict[str, list[dict]] = defaultdict(list)
     for problem in line_problems(index, state) + machine_problems(index, state):
-        if problem["resolved_at"] is None:
+        if problem["resolved_at"] is None and problem["problem_id"] not in done:
             open_problems[problem["node_id"]].append(problem)
     nodes = []
     for node in config.nodes:
-        passed = passed_items(index, node, since)
-        by_status = Counter(state.statuses.get(item_id) or "in_progress" for item_id in passed)
-        active = Counter(p["kind"] for p in open_problems.get(node.node_id, []))
+        here = open_problems.get(node.node_id, [])
+        active = Counter(p["kind"] for p in here)
+        flagged = {p["item_id"] for p in here if p["kind"] == "nonconformance"}
+        unclear = {p["item_id"] for p in here if p["kind"] == "not_assessable"} - flagged
+        passed = passed_items(index, node, since) | flagged | unclear
+        by_status: Counter = Counter()
+        for item_id in passed:
+            if item_id in flagged:
+                by_status["problem"] += 1
+            elif item_id in unclear:
+                by_status["not_assessable"] += 1
+            elif (state.statuses.get(item_id) or "in_progress") == "in_progress":
+                by_status["in_progress"] += 1
+            else:
+                by_status["ok"] += 1
         detected = [nc for nc, where in index.detected_at.items() if where == node.node_id]
         open_here = [nc for nc in detected if state.cards[nc].is_open]
         originated = [nc for nc, (where, _) in index.origins.items() if node.node_id in where]

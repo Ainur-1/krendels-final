@@ -480,7 +480,7 @@ def test_state_at_moment_hides_the_future(api):
     assert live["latest_event_at"] <= first["at"]
 
 
-def test_queue_is_about_the_present_and_past_shows_what_was_open(api):
+def test_problem_resolved_later_is_resolved_in_the_past_too(api):
     headers = login(api, "controller")
     now = api.get("/api/lines/L1/problems", headers=headers).json()
     resolved = now["resolved"]
@@ -489,13 +489,20 @@ def test_queue_is_about_the_present_and_past_shows_what_was_open(api):
     moment = datetime.fromisoformat(problem["resolved_at"]).timestamp() - 1
     at = datetime.fromtimestamp(moment, UTC).isoformat()
     past = api.get("/api/lines/L1/problems", params={"at": at}, headers=headers).json()
-    then = {p["problem_id"]: p for p in past["active"]}
-    assert then[problem["problem_id"]]["resolved_now"] is True
+    # Решённость — на настоящее время: за секунду до решения проблема уже в решённых.
+    assert problem["problem_id"] not in {p["problem_id"] for p in past["active"]}
+    assert problem["problem_id"] in {p["problem_id"] for p in past["resolved"]}
     live = api.get("/api/lines/L1/live", params={"at": at}, headers=headers).json()
     circles = sum(
         n["problems"]["nonconformance"] + n["problems"]["not_assessable"] for n in live["nodes"]
     )
-    assert circles == len(past["active"]), "круг над этапом — все действующие на момент проблемы"
+    assert circles == len(past["active"]), "круг над этапом — все действующие проблемы"
+    for node in live["nodes"]:
+        counts = node["counts"]
+        assert sum(counts.values()) == node["passed"]
+        # Шарики «проблема» и «оценка невозможна» — изделия, круг — проблемы: изделий не больше.
+        assert counts.get("problem", 0) <= node["problems"]["nonconformance"]
+        assert counts.get("not_assessable", 0) <= node["problems"]["not_assessable"]
     assert all(p["kind"] in {"nonconformance", "not_assessable"} for p in now["active"])
 
 
@@ -590,7 +597,8 @@ def test_admin_sees_database_without_secrets(api):
     assert all("password_hash" not in row for row in users["rows"])
     roles = api.get("/api/admin/roles", headers=headers).json()
     assert "decide" in roles["roles"]["controller"]["permissions"]
-    assert "decide" not in roles["roles"]["master"]["permissions"]
+    assert "decide" in roles["roles"]["master"]["permissions"]
+    assert "decide" not in roles["roles"]["technologist"]["permissions"]
     assert any(
         row["code"] == "POROSITY" for row in api.get("/api/admin/defects", headers=headers).json()
     )
@@ -621,26 +629,68 @@ def test_master_decides_on_not_assessable(api):
         for p in api.get("/api/lines/L1/problems", headers=master).json()["active"]
         if p["kind"] == "not_assessable"
     ]
-    assert len(open_ones) >= 2, "в демонстрационной базе есть «оценка невозможна»"
-    first, second = open_ones[0], open_ones[1]
+    assert open_ones, "в демонстрационной базе есть «оценка невозможна»"
+    first = open_ones[0]
     body = {"action": "accept_manual", "reason": "ручной осмотр, признаков нет"}
     url = f"/api/unassessable/{first['problem_id']}/decisions"
     assert api.post(url, json=body, headers=login(api, "technologist")).status_code == 403
     assert api.post(url, json={**body, "reason": " "}, headers=master).status_code == 409
     assert api.post(url, json=body, headers=master).status_code == 200
     assert api.post(url, json=body, headers=master).status_code == 409, "уже решена"
-
-    recheck = {"action": "request_recheck", "reason": "снимок пересвечен"}
-    url = f"/api/unassessable/{second['problem_id']}/decisions"
-    assert api.post(url, json=recheck, headers=login(api, "controller")).status_code == 200
-    _drain(api)
+    api.app.state.system.state()
     done = {
         p["problem_id"]: p
         for p in api.get("/api/lines/L1/problems", headers=master).json()["resolved"]
     }
     assert done[first["problem_id"]]["resolution"] == "accepted_manual"
     assert done[first["problem_id"]]["decisions"][0]["author_id"] == "master"
-    assert done[second["problem_id"]]["resolution"] == "rechecked", "эмулятор снял повторный снимок"
+
+
+def test_unclear_item_waits_and_goes_on_after_recheck(api):
+    config = api.app.state.lines.get("L2")
+    entry = config.node("L2-IN")
+    moment = datetime.now(UTC) - timedelta(minutes=1)
+    common = {"schema_version": "1.0", "line_id": "L2", "item_id": "L2-NA1-B2"}
+    api.app.state.system.ingest(
+        [
+            {
+                **common,
+                "event_id": "NA-TEST-1",
+                "event_type": "item_registered",
+                "occurred_at": moment.isoformat(),
+                "source_id": "mes-test",
+                "item_type_id": config.product_type_id,
+            },
+            {
+                **common,
+                "event_id": "NA-TEST-2",
+                "event_type": "inspection_reported",
+                "occurred_at": (moment + timedelta(seconds=20)).isoformat(),
+                "source_id": "vision-test",
+                "item_type_id": config.product_type_id,
+                "station_id": entry.station_id,
+                "checkpoint_id": entry.checkpoint_id,
+                "checkpoint_kind": entry.checkpoint_kind,
+                "inspection_result": "not_assessable",
+                "observation_quality": "poor",
+                "confidence": 0.2,
+            },
+        ]
+    )
+    api.app.state.system.state()
+    master = login(api, "master")
+    path = api.get("/api/items/L2-NA1-B2/path", headers=master).json()
+    assert path["status"] == "not_assessable", "плохой снимок — ни годно, ни брак"
+    body = {"action": "request_recheck", "reason": "снимок пересвечен"}
+    url = "/api/unassessable/NA-NA-TEST-2/decisions"
+    assert api.post(url, json=body, headers=master).status_code == 200
+    _drain(api)
+    after = api.get("/api/items/L2-NA1-B2/path", headers=master).json()
+    visits = [(v["node_id"], v["label"]) for v in after["visits"] if v["at"]]
+    assert visits[:2] == [("L2-IN", "not_assessable"), ("L2-IN", "passed")], visits
+    assert len(visits) > 2, "после повторного контроля изделие пошло дальше по линии"
+    problem = api.get("/api/lines/L2/problems", params={"problem": "NA-NA-TEST-2"}, headers=master)
+    assert problem.json()["resolved"][0]["resolution"] == "rechecked"
 
 
 def test_confirmed_defect_is_reworked_and_the_item_goes_on(api):

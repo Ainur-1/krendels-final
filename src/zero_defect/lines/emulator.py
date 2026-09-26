@@ -54,6 +54,10 @@ class Planner:
     rng: random.Random
     prefix: str
     speed: float = 1.0
+    # Живая линия задерживает изделие с «оценка невозможна» до решения мастера или
+    # контролёра. История демонстрационной базы решений людей по ним не содержит, поэтому
+    # там ОТК переснимает изделие в той же точке сам и изделие идёт дальше.
+    hold_unclear: bool = False
     sequences: dict[str, int] = field(default_factory=dict)
     events: list[tuple[datetime, dict]] = field(default_factory=list)
     detections: list[dict] = field(default_factory=list)
@@ -331,6 +335,14 @@ class Planner:
                 last_runs[node.node_id] = run_id
                 continue
             at, outcome = self._inspection(node, item_id, item_type, at, carried, force)
+            if outcome == "unreliable":
+                # Плохой снимок годностью не становится: без повторного контроля в той же
+                # точке изделие дальше не идёт.
+                if self.hold_unclear:
+                    return at, True
+                at, outcome = self._reinspect(
+                    node, item_id, item_type, at + self._dur(self.rng.uniform(300, 900)), carried
+                )
             if outcome != "found":
                 continue
             reworkable = [
@@ -472,6 +484,30 @@ class Planner:
                 **common,
             )
         return at + self._dur(node.duration_s)
+
+    def _reinspect(
+        self, node: Node, item_id: str, item_type: str, at: datetime, carried: list[Carried]
+    ) -> tuple[datetime, str]:
+        """Повторный достоверный контроль после плохого снимка: признак виден, если он есть."""
+
+        defects = [
+            {
+                "defect_type": defect.defect_type,
+                "area": defect.area,
+                "severity": defect.severity,
+                "description": f"признак {defect.defect_type}",
+                **({"component_item_id": defect.item_id} if defect.item_id != item_id else {}),
+            }
+            for defect in carried
+        ]
+        end = self.recheck(node, item_id, item_type, at, defects or None)
+        if not carried:
+            return end, "clean"
+        for defect in carried:
+            self.detections.append(
+                {"at": at, "defect": defect, "confidence": 0.9, "node": node.node_id}
+            )
+        return end, "found"
 
     def resume(
         self,
@@ -718,7 +754,11 @@ class LiveEmulator:
             # с изделиями прошлого прогона.
             stamp = datetime.fromtimestamp(now, UTC).strftime("%m%d%H%M%S")
             planner = Planner(
-                config, random.Random(seed), prefix=f"{self._token}F{self._runs}", speed=speed
+                config,
+                random.Random(seed),
+                prefix=f"{self._token}F{self._runs}",
+                speed=speed,
+                hold_unclear=True,
             )
             for index in range(items):
                 start = datetime.fromtimestamp(now + index * config.takt_s / speed, UTC)
@@ -761,6 +801,7 @@ class LiveEmulator:
                 random.Random(),
                 prefix=f"{self._token}D{self._follow_ups}",
                 speed=line.speed,
+                hold_unclear=True,
             )
             plan(planner, datetime.fromtimestamp(time.time() + 1, UTC))
             for at, message in planner.events:
@@ -797,7 +838,9 @@ class LiveEmulator:
                     continue
                 if line.running and now >= line.next_spawn:
                     if line.planner is None or line.planner.config.version != config.version:
-                        line.planner = Planner(config, random.Random(), prefix=f"{self._token}")
+                        line.planner = Planner(
+                            config, random.Random(), prefix=f"{self._token}", hold_unclear=True
+                        )
                     line.planner.speed = line.speed
                     line.planner.events.clear()
                     line.sets += 1

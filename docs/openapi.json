@@ -3529,7 +3529,7 @@
     },
     "/api/lines/{line_id}/items": {
       "get": {
-        "description": "Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру.",
+        "description": "Изделия линии с фильтрами по столбцам: тип, статус, текущий этап, поиск по номеру.\n\nsince и until оставляют изделия, у которых были события внутри промежутка шкалы.\nБез них — все изделия линии: промежуток шкалы список не сужает, пока об этом не\nпопросили.",
         "operationId": "line_items_api_lines__line_id__items_get",
         "parameters": [
           {
@@ -3619,6 +3619,38 @@
                 }
               ],
               "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
             }
           },
           {

@@ -18,6 +18,7 @@
   --amber-soft: #fff1d1;
   --resolved: #a3abb6;
   --review: #8e5bd6;
+  --review-soft: #f1eafd;
   --resolved-amber: #d6c7a6;
   --sev-minor: #f3a6a6;
   --sev-major: #e03131;
@@ -39,7 +40,7 @@
   :root {
     --bg: #0f1319; --panel: #171d25; --panel-2: #1c232d; --text: #e3e8ef; --muted: #95a1b1;
     --line: #2a333f; --accent: #7d9cff; --accent-soft: #222c44; --ok: #55c688; --ok-soft: #173024;
-    --warn: #e7a846; --warn-soft: #362a15; --fair: #e2c64f; --fair-soft: #332d12; --amber: #f0b429; --amber-soft: #3a2c0d; --resolved: #5b6572; --review: #b08cf0; --resolved-amber: #6e6450; --sev-minor: #f7b0b0; --sev-major: #f06262; --sev-critical: #c43b3b; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
+    --warn: #e7a846; --warn-soft: #362a15; --fair: #e2c64f; --fair-soft: #332d12; --amber: #f0b429; --amber-soft: #3a2c0d; --resolved: #5b6572; --review: #b08cf0; --review-soft: #2c2340; --resolved-amber: #6e6450; --sev-minor: #f7b0b0; --sev-major: #f06262; --sev-critical: #c43b3b; --bad: #f0786d; --bad-soft: #3a201e; --info: #a99cff;
     --info-soft: #28243f; --origin: #f39a4c; --node-op: #1d2638; --node-qc: #1b2a24; --flow: #3d4b5e;
     color-scheme: dark;
   }
@@ -580,3 +581,10 @@ svg .badge-g .count { font-size: 12px; }
 .list li.problem.just-decided { box-shadow: 0 0 0 3px var(--accent); }
 .node-chip.click { cursor: pointer; }
 .node-chip.click:hover { border-color: var(--accent); }
+
+.badge.review { background: var(--review-soft); color: var(--review); }
+.badge.blue { background: var(--accent-soft); color: var(--accent); }
+/* Подпись шкалы не меняет размер: скрытое решённое остаётся в легенде серым. */
+.tl-key .off { opacity: .35; filter: grayscale(1); }
+.pinned { margin-bottom: 10px; }
+.node-chip.chosen { outline: 3px solid var(--accent); outline-offset: 2px; }

@@ -53,8 +53,9 @@ def test_reason_is_mandatory(system, users, card):
         system.decide(users["controller"], card.nc_id, "confirm", "   ")
 
 
-@pytest.mark.parametrize("user", ["master", "manager", "technologist", "administrator"])
-def test_only_controller_confirms(system, users, card, user):
+# Подтверждают контролёр ОТК и мастер участка; остальные роли — нет.
+@pytest.mark.parametrize("user", ["manager", "technologist", "administrator"])
+def test_only_controller_and_master_confirm(system, users, card, user):
     with pytest.raises(AuthError) as error:
         system.decide(users[user], card.nc_id, "confirm", "попытка")
     assert error.value.status == 403

@@ -58,32 +58,51 @@ def test_views_on_demo_data(client):
     }
     item = client.get("/api/items/U-0401", headers=headers).json()
     assert item["status"] == "suspect" and item["components"]
-    card = client.get(f"/api/nonconformances/{cards[0]['nc_id']}", headers=headers).json()
-    assert card["allowed_actions"] == []
+    # Мастер решает по проблемам участка так же, как контролёр, технолог — нет.
+    url = f"/api/nonconformances/{cards[0]['nc_id']}"
+    card = client.get(url, headers=headers).json()
+    as_master = card["allowed_actions"]
+    assert (
+        as_master == client.get(url, headers=login(client, "controller")).json()["allowed_actions"]
+    )
+    as_technologist = client.get(url, headers=login(client, "technologist")).json()[
+        "allowed_actions"
+    ]
+    assert not {"confirm", "reject", "close"} & set(as_technologist)
     assert card["signals_detail"][0]["raw"]["event_id"]
 
 
 def test_missing_evidence_is_not_faked(client):
     headers = login(client, "controller")
     cards = client.get("/api/nonconformances", headers=headers).json()
-    porosity = next(card for card in cards if card["defect_type"] == "POROSITY")
+    # Сварной шов ситуации 03: у сигнала есть ссылка на снимок, которого в контуре нет.
+    porosity = next(
+        card for card in cards if card["defect_type"] == "POROSITY" and card["item_id"] == "B-0301"
+    )
     detail = client.get(f"/api/nonconformances/{porosity['nc_id']}", headers=headers).json()
     assert detail["evidence"] and detail["evidence"][0]["available"] is False
 
 
-def test_master_cannot_decide_controller_can(client):
+def test_master_and_controller_decide_technologist_cannot(client):
     cards = client.get("/api/nonconformances", headers=login(client, "controller")).json()
     target = next(card for card in cards if card["status"] == "reported")
     url = f"/api/nonconformances/{target['nc_id']}/decisions"
     body = {"action": "start_review", "reason": "беру в работу"}
-    assert client.post(url, json=body, headers=login(client, "master")).status_code == 403
-    response = client.post(url, json=body, headers=login(client, "controller"))
+    assert client.post(url, json=body, headers=login(client, "technologist")).status_code == 403
+    response = client.post(url, json=body, headers=login(client, "master"))
     assert response.status_code == 200
     assert response.json()["card"]["status"] == "under_review"
-    wrong = client.post(
-        url, json={"action": "close", "reason": "нельзя"}, headers=login(client, "controller")
+    assert response.json()["decision"]["author_role"] == "master"
+    confirmed = client.post(
+        url,
+        json={"action": "confirm", "reason": "подтверждено"},
+        headers=login(client, "controller"),
     )
-    assert wrong.status_code == 409
+    assert confirmed.json()["card"]["status"] == "confirmed"
+    wrong = client.post(
+        url, json={"action": "reopen", "reason": "x"}, headers=login(client, "technologist")
+    )
+    assert wrong.status_code == 403
 
 
 def test_signed_batch_from_edge_source(client):

@@ -248,13 +248,16 @@ def item_status(
     cards: dict[str, Nonconformance],
     accepted: frozenset[str] = frozenset(),
     by_item: dict[str, list[Nonconformance]] | None = None,
+    pending: frozenset[str] = frozenset(),
 ) -> str:
     """Итоговый статус изделия с учётом его компонентов.
 
     accepted — наблюдения «оценка невозможна», по которым человек допустил изделие по
     ручному контролю: такое наблюдение считается достоверным и чистым. by_item — карточки
     по изделию: без него каждое изделие перебирает все карточки, и на десятках тысяч
-    событий пересборка становится квадратичной.
+    событий пересборка становится квадратичной. pending — изделия с нерешённой «оценка
+    невозможна»: пока её не сняли повторным контролем или решением человека, изделие не
+    признаётся годным, даже если следующие проверки чистые.
     """
 
     scope = {item_id, *_descendants(item_id, history)}
@@ -266,13 +269,15 @@ def item_status(
         return "nonconforming"
     if any(card.is_open for card in related):
         return "suspect"
+    if scope & pending:
+        return "not_assessable"
     item = history.items.get(item_id)
     if item is None:
         return "unknown"
     # Компонент после установки в сборку проверяется финальным контролем сборки, поэтому
     # его итог — итог сборки, если у самого компонента вопросов нет.
     if item.parent_id and item.parent_id in history.items:
-        return item_status(item.parent_id, history, cards, accepted, by_item)
+        return item_status(item.parent_id, history, cards, accepted, by_item, pending)
 
     def unclear(obs: Observation) -> bool:
         return obs.effective_result == "not_assessable" and obs.event.event_id not in accepted
