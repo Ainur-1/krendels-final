@@ -87,7 +87,7 @@ uv run python scripts/check_compat.py
 uv run python scripts/export_openapi.py --check
 ```
 
-Рабочий режим без демонстрационных данных — `security.demo = false` в `config/zero_defect.toml`: выбора роли на входе нет, пароль задаёт `uv run python scripts/keys.py password <пользователь>`. Ограничения развёртывания (HTTP внутри Compose, TLS между машинами) — в [docs/security.md](docs/security.md), временный стенд Render — в [docs/render.md](docs/render.md).
+Рабочий режим без демонстрационных данных — `security.demo = false` в `config/zero_defect.toml`: выбора роли на входе нет, пароль задаёт `uv run python scripts/keys.py password <пользователь>`. Финальный VPS, автоматическая публикация из GitHub и проверка SHA описаны в [docs/deploy-vps.md](docs/deploy-vps.md); ограничения защиты — в [docs/security.md](docs/security.md), временный стенд Render — в [docs/render.md](docs/render.md).
 
 ## Что проверено
 

@@ -19,5 +19,6 @@ tests/
 scripts/
 reports/
 docs/
+deploy/
 
 .DS_Store

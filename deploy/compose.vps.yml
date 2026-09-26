@@ -1,0 +1,48 @@
+# Публичен только интерфейс. PostgreSQL и MES-эмулятор доступны внутри сети Compose.
+name: krendels-final
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zero_defect
+      POSTGRES_USER: zd
+      POSTGRES_PASSWORD: ${ZD_DB_PASSWORD:?задайте пароль базы в серверном .env}
+    volumes:
+      - final-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zd -d zero_defect"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  emulator:
+    image: ${ZD_IMAGE:?задайте образ релизного коммита}
+    restart: unless-stopped
+    user: "10001:10001"
+    command: ["uvicorn", "zero_defect.integration.emulator:app", "--host", "0.0.0.0", "--port", "8100"]
+
+  app:
+    image: ${ZD_IMAGE:?задайте образ релизного коммита}
+    restart: unless-stopped
+    user: "10001:10001"
+    ports:
+      - "8000:8000"
+    environment:
+      ZD_STORAGE_URL: postgresql+psycopg://zd:${ZD_DB_PASSWORD}@db:5432/zero_defect
+      ZD_MES_EMULATOR_BASE_URL: http://emulator:8100
+      ZD_SECURITY_DEMO: "true"
+    volumes:
+      - final-keys:/app/var
+    depends_on:
+      db:
+        condition: service_healthy
+      emulator:
+        condition: service_started
+
+volumes:
+  final-db:
+    name: krendels-final-db
+  final-keys:
+    name: krendels-final-keys

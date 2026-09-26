@@ -1,6 +1,5 @@
-# Стиль, тесты, согласованность сгенерированного и сценарии — на каждом пуше. Образ
-# собирается только после зелёных проверок: `needs` не запустит сборку, если упала
-# хоть одна.
+# Стиль, тесты, контракты и сценарии проверяются до сборки. Только успешный
+# push в main передаёт образ на VPS; pull request ничего не развёртывает.
 name: pipeline
 
 on:
@@ -84,12 +83,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      # Образ собирается, но не публикуется: цель — убедиться, что запуск на чистой
-      # машине воспроизводим.
+      # Загружаем образ в Docker раннера. Именно эти байты передаются на VPS после
+      # успешной сборки, без зависимости от публичности контейнерного реестра.
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
-          tags: zero-defect:ci
+          load: true
+          tags: zero-defect:${{ github.sha }}
+          build-args: VCS_REF=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Ключ для SSH-деплоя
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Передать и запустить проверенный образ
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DEPLOY_IMAGE: zero-defect:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          cp deploy/known_hosts ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          docker save "$DEPLOY_IMAGE" | gzip -1 | \
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes root@135.106.196.206 \
+              load
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes root@135.106.196.206 \
+            "activate:${{ github.sha }}"
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 \
+            http://135.106.196.206:8000/api/health

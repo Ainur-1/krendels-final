@@ -31,6 +31,9 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked
 # --- то, что работает -----------------------------------------------------------
 FROM python:3.12-slim AS runtime
 
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+
 # Сервис разбирает сообщения извне, поэтому работает не под root.
 RUN useradd --create-home --uid 10001 zd
 
