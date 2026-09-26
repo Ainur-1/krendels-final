@@ -120,11 +120,12 @@ def load_settings(path: Path | None = None, **overrides: object) -> Settings:
     shifts_raw = raw.get("shifts", {})
     integration = raw.get("integration", {})
     enabled_env = _env("integration", "enabled")
-    enabled = (
-        tuple(name for name in enabled_env.split(",") if name)
-        if enabled_env is not None
-        else tuple(integration.get("enabled", ()))
-    )
+    if enabled_env is not None and enabled_env.strip().lower() == "none":
+        enabled = ()
+    elif enabled_env is not None:
+        enabled = tuple(name.strip() for name in enabled_env.split(",") if name.strip())
+    else:
+        enabled = tuple(integration.get("enabled", ()))
     adapters = {}
     for name in enabled:
         section = integration.get(name, {})

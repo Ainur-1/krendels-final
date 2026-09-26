@@ -1,0 +1,24 @@
+# Временный бесплатный стенд для команды. Итоговый стенд жюри разворачивается на VPS.
+services:
+  - type: web
+    runtime: docker
+    name: krendeli-moscow-preview
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeployTrigger: checksPass
+    healthCheckPath: /api/health
+    envVars:
+      # Dockerfile и его HEALTHCHECK используют порт 8000.
+      - key: PORT
+        value: "8000"
+      # Бесплатный сервис теряет локальные файлы при засыпании/перезапуске.
+      # База и ключи живут вместе в /app/var и пересоздаются из демо-сценариев.
+      - key: ZD_STORAGE_URL
+        value: sqlite:////app/var/render-preview.sqlite3
+      - key: ZD_SECURITY_DEMO
+        value: "true"
+      # В этой конфигурации нет отдельного процесса MES-эмулятора.
+      # Двусторонний обмен показывается на финальном VPS.
+      - key: ZD_INTEGRATION_ENABLED
+        value: "none"

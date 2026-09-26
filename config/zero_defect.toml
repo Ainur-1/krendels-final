@@ -49,7 +49,8 @@ timezone_offset_h = 3
 
 [integration]
 # Какие адаптеры внешних систем включены. Новый адаптер подключается строкой здесь и
-# регистрацией в zero_defect.integration.registry — без правки ядра.
+# секцией с factory; правила ядра и реестр адаптеров менять не нужно.
+# Для временного стенда без внешней системы: ZD_INTEGRATION_ENABLED=none.
 enabled = ["mes_emulator"]
 
 [integration.mes_emulator]
