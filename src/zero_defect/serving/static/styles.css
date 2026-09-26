@@ -493,9 +493,7 @@ svg .node.focused .focus-ring { stroke: var(--bad); animation: focus-pulse 1.4s 
 .tl-track { position: relative; padding-top: 22px; }
 .tl-markers { top: 2px; height: 16px; }
 .tl-mark { top: 2px; width: 10px; height: 14px; margin-left: -5px; border-radius: 3px; }
-.tl-mark.m-bad, .tl-key i.m-bad { background: var(--sev-major); }
-.tl-mark.m-bad.sev-minor { background: var(--sev-minor); }
-.tl-mark.m-bad.sev-critical { background: var(--sev-critical); }
+.tl-mark.m-bad, .tl-key i.m-bad { background: var(--bad); }
 .tl-mark.m-amber, .tl-key i.m-amber { background: var(--amber); }
 .tl-mark.m-ok, .tl-key i.m-ok { background: var(--ok); }
 .tl-mark.outside { opacity: .35; }
@@ -554,3 +552,25 @@ svg .node.focused .focus-ring { stroke: var(--bad); animation: focus-pulse 1.4s 
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 16px; color: var(--text); font-size: 13px; }
 .check { display: flex; gap: 8px; align-items: flex-start; }
 .crumbs a { white-space: nowrap; }
+
+/* Круг над этапом: действующие проблемы, выбранный круг обведён. */
+svg .badge-g .badge-ring { fill: none; stroke: transparent; stroke-width: 3; }
+svg .badge-g:hover .badge-ring { stroke: var(--line); }
+svg .badge-g.selected .badge-ring { stroke: var(--text); }
+svg .badge-g .count { font-size: 12px; }
+.circle-pop { position: fixed; z-index: 30; width: 340px; max-height: 420px; display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); }
+.circle-pop .pop-head { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.circle-pop .pop-head b { flex: 1; }
+.circle-pop .pop-body { overflow: auto; padding: 8px 10px; }
+.circle-pop .pop-sep { margin: 10px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+
+/* Шкала: промежуток перетаскивается целиком; выбранная проблема связана с её решением. */
+.tl-sel { cursor: grab; }
+.tl-sel.dragging { cursor: grabbing; background: var(--accent); opacity: .35; }
+.tl-link { position: absolute; top: 8px; height: 2px; background: var(--text); opacity: .6; pointer-events: none; }
+
+/* Изделие и проблема: две половины одной вкладки. */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.pair-side + .pair-side { border-left: 1px solid var(--line); padding-left: 20px; }
+@media (max-width: 1100px) { .pair { grid-template-columns: 1fr; } .pair-side + .pair-side { border-left: none; padding-left: 0; } }

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -492,11 +492,10 @@ def test_queue_is_about_the_present_and_past_shows_what_was_open(api):
     then = {p["problem_id"]: p for p in past["active"]}
     assert then[problem["problem_id"]]["resolved_now"] is True
     live = api.get("/api/lines/L1/live", params={"at": at}, headers=headers).json()
-    faded = sum(
-        n["problems"]["nonconformance_resolved"] + n["problems"]["not_assessable_resolved"]
-        for n in live["nodes"]
+    circles = sum(
+        n["problems"]["nonconformance"] + n["problems"]["not_assessable"] for n in live["nodes"]
     )
-    assert faded == sum(1 for p in past["active"] if p["resolved_now"])
+    assert circles == len(past["active"]), "круг над этапом — все действующие на момент проблемы"
     assert all(p["kind"] in {"nonconformance", "not_assessable"} for p in now["active"])
 
 
@@ -531,6 +530,48 @@ def test_live_view_counts_every_item_that_passed_a_stage(api):
     for node in live["nodes"]:
         assert sum(node["counts"].values()) == node["passed"]
     assert max(node["passed"] for node in live["nodes"]) > 0
+
+
+def test_stage_counts_follow_the_range(api):
+    headers = login(api, "master")
+    whole = api.get("/api/lines/L1/live", headers=headers).json()
+    end = api.get("/api/lines/L1/timeline", headers=headers).json()["end"]
+    since = (datetime.fromisoformat(end) - timedelta(minutes=5)).isoformat()
+    recent = api.get("/api/lines/L1/live", params={"since": since}, headers=headers).json()
+    passed = {n["node_id"]: n["passed"] for n in whole["nodes"]}
+    assert all(n["passed"] <= passed[n["node_id"]] for n in recent["nodes"])
+    assert sum(n["passed"] for n in recent["nodes"]) < sum(passed.values())
+
+
+def test_machine_problem_is_an_episode_until_the_machine_runs_again(api):
+    headers = login(api, "technologist")
+    data = api.get("/api/lines/L1/problems", params={"lane": "machines"}, headers=headers).json()
+    episodes = data["active"] + data["resolved"]
+    assert episodes, "эмулятор даёт сбои станков"
+    assert all(p["kind"] == "machine" and p["equipment_id"] for p in episodes)
+    assert all(p["resolved_at"] > p["at"] for p in data["resolved"])
+    live = api.get("/api/lines/L1/live", headers=headers).json()
+    assert sum(n["problems"]["machine"] for n in live["nodes"]) == len(data["active"])
+    marks = api.get("/api/lines/L1/timeline", headers=headers).json()["markers"]
+    machine = [m for m in marks if m["lane"] == "machines"]
+    assert {m["kind"] for m in machine} <= {"problem", "resolved"}
+    assert all(m["problem_id"].startswith("MF-") for m in machine)
+
+
+def test_stage_problem_list_has_active_and_resolved_in_range(api):
+    headers = login(api, "controller")
+    data = api.get("/api/lines/L1/problems", headers=headers).json()
+    problem = data["resolved"][0]
+    node = problem["node_id"]
+    here = api.get("/api/lines/L1/problems", params={"node": node}, headers=headers).json()
+    assert all(p["node_id"] == node for p in here["active"] + here["resolved"])
+    since = problem["resolved_at"]
+    later = api.get(
+        "/api/lines/L1/problems", params={"node": node, "since": since}, headers=headers
+    ).json()
+    assert all(p["resolved_at"] >= since for p in later["resolved"])
+    mine = api.get("/api/lines/L1/problems", params={"item": problem["item_id"]}, headers=headers)
+    assert problem["problem_id"] in {p["problem_id"] for p in mine.json()["resolved"]}
 
 
 def test_admin_sees_database_without_secrets(api):

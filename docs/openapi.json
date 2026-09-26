@@ -3705,6 +3705,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -3824,7 +3840,7 @@
     },
     "/api/lines/{line_id}/problems": {
       "get": {
-        "description": "Проблемы линии: активные и решённые. Без at — очередь контролёра, она всегда о\nнастоящем и не зависит от шкалы времени. С at — проблемы на тот момент, у каждой\nотметка, решена ли она к настоящему.",
+        "description": "Проблемы линии: действующие на момент и решённые к нему. Без at — очередь\nконтролёра, она всегда о настоящем и не зависит от шкалы времени. С at — проблемы\nна тот момент, у действующих отметка, решены ли они к настоящему.\n\nnode и item сужают список до этапа или изделия, since отсекает решённые до начала\nпромежутка. lane=machines — проблемы оборудования вместо проблем изделий.",
         "operationId": "problems_api_lines__line_id__problems_get",
         "parameters": [
           {
@@ -3850,6 +3866,64 @@
                 }
               ],
               "title": "At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "node",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Item"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lane",
+            "required": false,
+            "schema": {
+              "default": "items",
+              "title": "Lane",
+              "type": "string"
             }
           },
           {

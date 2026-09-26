@@ -1,16 +1,16 @@
 // Интерфейс Zero Defect: обзор производства → линия. Всё содержимое выводится на экране
-// линии вокруг её графа: детали — в правой панели, этапы — в выпадающей сверху панели,
-// время — на шкале внизу. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
-import { CONTRACT } from "./contract.js?v=0.5.0";
-import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.0";
-import { openEditor } from "./editor.js?v=0.5.0";
+// линии вокруг её графа: подробности — во вкладках под линией, этапы — в выпадающей сверху
+// панели, время — на шкале. Без сборки и внешних библиотек: в закрытом контуре нет CDN.
+import { CONTRACT } from "./contract.js?v=0.5.1";
+import { $, L, api, badge, can, esc, login, logout, marqueeSvg, mins, modal, notify, pct, picker, poller, rub, session, store, time } from "./common.js?v=0.5.1";
+import { openEditor } from "./editor.js?v=0.5.1";
 
 const GUIDE = {
-  controller: ["Слева расположена очередь текущих проблем линии: сначала критичные, решённые внизу списка. Очередь не зависит от шкалы времени.", "Выбор проблемы переносит линию в момент её обнаружения и выделяет этап, на котором она обнаружена.", "Решение принимается во вкладке «Проблема» под линией с обязательным обоснованием и записывается отдельной записью журнала."],
-  master: ["На обзоре производства красная рамка обозначает линию с проблемами, ожидающими решения.", "Под каждым этапом в кругах указано число прошедших изделий по статусам. Над этапом указано число проблем на выбранный момент.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
-  technologist: ["Кнопка «Оборудование» в шапке открывает справочник станков. Новый станок регистрируется по типу, который описал администратор.", "Слева показаны этапы возникновения дефектов и сбои оборудования. Полоса у каждого станка отражает его последние состояния.", "На шкале времени отмечены сбои станков (красным) и их возврат в работу (зелёным).", "Выбор станка открывает во вкладке «Этап» его показатели и графики параметров режима с полосой допуска."],
+  controller: ["Слева расположена очередь текущих проблем линии: сначала критичные, решённые внизу списка. Очередь не зависит от шкалы времени.", "Выбор проблемы переносит линию в момент её обнаружения и выделяет этап, на котором она обнаружена.", "Во вкладке «Изделие и проблема» слева показано изделие, справа проблема. Решение принимается справа с обязательным обоснованием и записывается отдельной записью журнала."],
+  master: ["На обзоре производства красная рамка обозначает линию с проблемами, ожидающими решения.", "Под каждым этапом указано число изделий за промежуток по статусам. Красный круг над этапом показывает действующие проблемы и открывает их список.", "На шкале времени переключатель «Дефекты / Отклонения» выбирает вид отметок. Выбор в каждом виде сохраняется."],
+  technologist: ["Кнопка «Оборудование» в шапке открывает справочник станков. Новый станок регистрируется по типу, который описал администратор.", "Слева расположена очередь сбоев оборудования, состояние станков и подтверждённые несоответствия, по которым технолог устанавливает причину. Красный круг над этапом показывает действующий сбой станка.", "На шкале времени отмечены сбои станков (красным) и их возврат в работу (зелёным).", "Выбор станка открывает во вкладке «Этап» его показатели и графики параметров режима с полосой допуска."],
   manager: ["Обзор производства показывает все линии и выпускаемые изделия. Кнопка «Новая линия» открывает блочный редактор.", "Операция назначается на станок из справочника оборудования. Обработка и виды дефектов определяются типом станка.", "Кнопка «Экономика» в шапке линии открывает расчёт потерь и затрат на годное изделие."],
-  admin: ["Главный экран администратора: «Администрирование». Здесь описываются типы станков и виды дефектов, заводятся роли и пользователи.", "Тип станка является шаблоном: обработка, виды дефектов и параметры режима с допусками. Конкретный станок по шаблону регистрирует технолог.", "Раздел «Производство» открывает линии. Режим «Смотреть как» показывает экран другой роли, права администратора при этом сохраняются."],
+  admin: ["Главный экран администратора: «Администрирование». Здесь описываются типы станков и виды дефектов, заводятся роли и пользователи.", "Тип станка является шаблоном: обработка, виды дефектов и параметры режима с допусками. Конкретный станок по шаблону регистрирует технолог.", "Раздел «Производство» открывает линии. Режим «Смотреть как» открывает базовый экран выбранной роли, права администратора при этом сохраняются. Экран запоминается для каждой роли отдельно."],
 };
 
 const S = {
@@ -18,6 +18,7 @@ const S = {
   itemType: "", viewRole: null, detail: null, prevItems: new Map(), prevNodes: {}, geometry: null, zoom: null, playing: null,
   playSpeed: 300, pollers: [], itemFilters: { item_type: "", status: "", stage: "", q: "" }, stagesOpen: false, leftOpen: false,
   range: { since: null, until: null }, windowMode: null, lane: "items", focusByLane: { items: null, machines: null }, selectedNode: null, queue: null,
+  machineQueue: null, hideResolved: false, circle: null, pair: { item: null, problem: null },
 };
 const withAt = (path) => (S.at ? `${path}${path.includes("?") ? "&" : "?"}at=${encodeURIComponent(S.at)}` : path);
 
@@ -66,11 +67,22 @@ async function enter(token) {
   $("view-as-wrap").classList.toggle("hidden", !can("view_as"));
   $("view-as").innerHTML = Object.keys(GUIDE).map((r) => `<option value="${r}">${esc(L.role[r])}</option>`).join("");
   $("view-as").value = S.viewRole;
-  $("view-as").onchange = () => { S.viewRole = $("view-as").value; syncLeft(); renderRolePanel(); if (S.timeline) renderTimeline(); if (S.live) renderGraph(S.live); };
+  $("view-as").onchange = () => { S.viewRole = $("view-as").value; S.leftOpen = false; syncLeft(); openRoleScreen(); };
   S.lines = await api("/api/lines");
-  const saved = store.get("zd-line");
-  if (saved && S.lines.some((l) => l.line_id === saved) && store.get("zd-view") === "line") openLine(saved);
-  else if (can("admin") && store.get("zd-view") !== "plant") showAdmin();
+  openRoleScreen(true);
+}
+
+// Экран привязан к роли, а не к сайту: у каждой роли свой базовый экран и своя память о
+// последнем открытом. При входе открывается то, где роль была в прошлый раз; при смене
+// роли в «Смотреть как» — её базовый экран заново.
+const BASE_SCREEN = { admin: "admin" };
+const viewKey = () => `zd-view:${S.viewRole}`;
+function openRoleScreen(restore = false) {
+  const base = BASE_SCREEN[S.viewRole] || "plant";
+  const saved = restore ? store.get(viewKey()) : null;
+  const line = store.get(`zd-line:${S.viewRole}`);
+  if (saved === "line" && line && S.lines.some((l) => l.line_id === line)) openLine(line);
+  else if ((saved || base) === "admin" && can("admin")) showAdmin();
   else showPlant();
 }
 $("logout").addEventListener("click", () => { logout(); showLogin(); });
@@ -96,6 +108,7 @@ document.addEventListener("pointerdown", (e) => {
   if (!(t instanceof Element) || t.closest(".modal-backdrop, .toast")) return;
   if (S.stagesOpen && !t.closest("#stages-drop, [data-act='stages'], .node, #details")) closeStages();
   if (S.leftOpen && S.viewRole === "admin" && !t.closest("#role-panel, #left-toggle")) setLeft(false);
+  if (S.circle && !t.closest("#circle-pop, [data-badge]")) closeCircle();
 }, true);
 
 function renderTop() {
@@ -132,7 +145,7 @@ async function afterSave(lineId) { S.lines = await api("/api/lines"); openLine(l
 
 function showPlant() {
   S.view = "plant";
-  store.set("zd-view", "plant");
+  store.set(viewKey(), "plant");
   stopPollers();
   stopPlaying();
   closeStages();
@@ -200,9 +213,12 @@ async function openLine(lineId) {
   S.prevNodes = {};
   S.focusByLane = { items: null, machines: null };
   S.selectedNode = null;
+  S.circle = null;
+  S.queue = null;
+  S.machineQueue = null;
   stopPlaying();
-  store.set("zd-line", lineId);
-  store.set("zd-view", "line");
+  store.set(`zd-line:${S.viewRole}`, lineId);
+  store.set(viewKey(), "line");
   stopPollers();
   $("plant-view").classList.add("hidden");
   $("admin-view").classList.add("hidden");
@@ -217,7 +233,9 @@ async function openLine(lineId) {
   renderLegend();
   detailsEmpty();
   await refreshTimeline();
-  await Promise.all([refreshLive(), refreshOverview(), refreshQueue()]);
+  // Сначала граф: очередь и панель роли берут из него названия этапов.
+  await refreshLive();
+  await Promise.all([refreshOverview(), refreshQueue()]);
   S.pollers.push(
     poller(() => (S.at ? null : refreshLive()), 1500),
     poller(refreshQueue, 2000),
@@ -235,7 +253,8 @@ $("product-filter").addEventListener("change", (e) => {
 
 async function refreshLive() {
   if (S.view !== "line") return;
-  const live = await api(withAt(`/api/lines/${S.lineId}/live`));
+  const since = S.timeline?.start ? `?since=${encodeURIComponent(new Date(sinceMs()).toISOString())}` : "";
+  const live = await api(withAt(`/api/lines/${S.lineId}/live${since}`));
   if (live.line_id !== S.lineId) return;
   S.live = live;
   $("line-title").textContent = live.title;
@@ -244,21 +263,20 @@ async function refreshLive() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshLive(), refreshOverview(), S.stagesOpen ? refreshStages() : null]);
+  await Promise.all([refreshLive(), refreshOverview(), S.stagesOpen ? refreshStages() : null, S.circle ? loadCircle() : null]);
   if (S.detail?.refresh) await S.detail.refresh();
 }
 
 // --- граф ---------------------------------------------------------------------------------------------------
 
-const NODE_W = 160, NODE_H = 70, SX = 1.25, PILL_R = 14;
+const NODE_W = 160, NODE_H = 70, SX = 1.25, BADGE_R = 13;
 // Цвета статусов изделий. Красным здесь помечено только несоответствие, оттенки критичности
 // у списка проблем свои и с этими цветами не пересекаются.
 const STATUS = [["in_progress", "var(--accent)", "В работе"], ["conforming", "var(--ok)", "Годно"], ["suspect", "var(--bad)", "На рассмотрении"], ["nonconforming", "var(--bad)", "Несоответствие"], ["not_assessable", "var(--amber)", "Оценка невозможна"]];
 
 function renderLegend() {
-  $("graph-legend").innerHTML = `${STATUS.filter(([s]) => s !== "suspect").map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}
-    <span class="legend-sep">Проблемы на выбранный момент:</span>
-    <span><i class="sq" style="background:var(--bad)"></i>несоответствие</span><span><i class="sq" style="background:var(--amber)"></i>оценка невозможна</span><span><i class="sq" style="background:var(--resolved)"></i>решено позднее</span>`;
+  $("graph-legend").innerHTML = `<span class="muted">Под этапом — изделия за промежуток по статусам:</span>${STATUS.filter(([s]) => s !== "suspect").map(([, c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("")}
+    <span class="legend-sep"><i style="background:var(--bad)"></i>Над этапом — действующие проблемы на выбранный момент. Нажатие открывает их список.</span>`;
 }
 
 function geometry(raw) {
@@ -281,7 +299,11 @@ function edgePath(a, b) {
   return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
 }
 
-function setViewBox() { const z = S.zoom; $("graph").setAttribute("viewBox", `${z.x} ${z.y} ${z.w} ${z.h}`); }
+function setViewBox() {
+  const z = S.zoom;
+  $("graph").setAttribute("viewBox", `${z.x} ${z.y} ${z.w} ${z.h}`);
+  if (S.circle) placeCircle();
+}
 
 function buildGraph(live) {
   const g = geometry(live.nodes);
@@ -308,7 +330,7 @@ function buildGraph(live) {
     el.addEventListener("click", (e) => {
       const badgeEl = e.target.closest("[data-badge]");
       selectNode(el.dataset.node);
-      if (badgeEl) openStageProblems(el.dataset.node);
+      if (badgeEl) toggleCircle(el.dataset.node);
       else openNode(el.dataset.node);
     });
     el.addEventListener("mouseenter", () => hoverNode(el.dataset.node, true));
@@ -327,9 +349,8 @@ function hoverNode(nodeId, on) {
   if (!n) return;
   const p = n.problems;
   tip.innerHTML = `<b>${esc(n.title)}</b><div>${n.kind === "operation" ? `Станок ${esc(n.equipment_id || "не задан")}, норма ${mins(n.duration_s)}` : "Контрольная точка"}</div>
-    <div>Изделий прошло: ${n.passed}</div>
-    ${p.nonconformance ? `<div class="bad-text">Несоответствий в работе: ${p.nonconformance}</div>` : ""}${p.not_assessable ? `<div class="amber-text">Оценка невозможна: ${p.not_assessable}</div>` : ""}
-    ${p.nonconformance_resolved + p.not_assessable_resolved ? `<div class="muted">Решено позднее: ${p.nonconformance_resolved + p.not_assessable_resolved}</div>` : ""}`;
+    <div>Изделий за промежуток: ${n.passed}</div>
+    ${p.nonconformance ? `<div class="bad-text">Несоответствий: ${p.nonconformance}</div>` : ""}${p.not_assessable ? `<div class="amber-text">Оценка невозможна: ${p.not_assessable}</div>` : ""}${p.machine ? `<div class="bad-text">Сбой станка не устранён</div>` : ""}`;
   tip.classList.remove("hidden");
 }
 
@@ -339,11 +360,11 @@ function selectNode(nodeId) {
   $("stages").querySelectorAll("tr[data-node]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.node === nodeId));
 }
 
-// Круг со значением внутри. Большое число не помещается — полное значение в подсказке.
-function pill(cx, value, fill, label, extra = "") {
-  const text = value > 999 ? `${Math.floor(value / 1000)}k` : String(value);
-  return `<g class="count-pill ${extra}"><title>${esc(label)}: ${value}</title><circle cx="${cx}" cy="0" r="${PILL_R}" fill="${fill}"/><text x="${cx}" y="4" text-anchor="middle" class="count light">${text}</text></g>`;
-}
+// Над этапом один красный круг: число проблем, действующих на выбранный момент. У технолога
+// это сбои станка, у остальных — проблемы изделий (несоответствия и «оценка невозможна»).
+// Под этапом — точка и число изделий по статусам за промежуток шкалы времени.
+const activeProblems = (n) => (lane() === "machines" ? n.problems.machine : n.problems.nonconformance + n.problems.not_assessable);
+const problemsHint = (n) => (lane() === "machines" ? "Сбой станка не устранён" : [n.problems.nonconformance && `несоответствий: ${n.problems.nonconformance}`, n.problems.not_assessable && `оценка невозможна: ${n.problems.not_assessable}`].filter(Boolean).join(", "));
 
 function renderGraph(live) {
   if (!S.geometry || S.geometry.key !== geometry(live.nodes).key) buildGraph(live);
@@ -356,29 +377,87 @@ function renderGraph(live) {
     el.classList.add(`state-${raw.state}`);
     el.classList.toggle("selected", S.selectedNode === raw.node_id);
     el.classList.toggle("focused", !!f && f.node_id === raw.node_id);
-    el.querySelector('[data-f="passed"]').textContent = `Прошло: ${raw.passed}`;
-    const p = raw.problems;
-    const marks = [
-      [p.nonconformance, "var(--bad)", "Несоответствия в работе на этот момент"],
-      [p.not_assessable, "var(--amber)", "Оценка невозможна на этот момент"],
-      [p.nonconformance_resolved, "var(--resolved)", "Несоответствия, решённые позднее"],
-      [p.not_assessable_resolved, "var(--resolved-amber)", "Оценка невозможна, решено позднее"],
-    ].filter(([v]) => v);
-    let bx = NODE_W - PILL_R - 2;
-    el.querySelector('[data-f="badges"]').innerHTML = marks.map(([v, c, l]) => {
-      const out = `<g class="badge-g" data-badge="problems" transform="translate(0,-2)">${pill(bx, v, c, l)}</g>`;
-      bx -= PILL_R * 2 + 4;
-      return out;
-    }).join("");
-    let cx = PILL_R;
+    el.querySelector('[data-f="passed"]').textContent = `За промежуток: ${raw.passed}`;
+    const n = activeProblems(raw);
+    const text = n > 99 ? "99+" : String(n);
+    el.querySelector('[data-f="badges"]').innerHTML = n
+      ? `<g class="badge-g ${S.circle === raw.node_id ? "selected" : ""}" data-badge="problems" transform="translate(${NODE_W - BADGE_R + 4},-4)"><title>Действующих проблем: ${n} (${esc(problemsHint(raw))}). Нажмите, чтобы открыть список.</title><circle class="badge-ring" r="${BADGE_R + 4}"/><circle r="${BADGE_R}" fill="var(--bad)"/><text y="4" text-anchor="middle" class="count light">${text}</text></g>`
+      : "";
+    let cx = 2;
     el.querySelector('[data-f="counts"]').innerHTML = STATUS.filter(([s]) => raw.counts[s]).map(([s, color, label]) => {
-      const out = pill(cx, raw.counts[s], color, label);
-      cx += PILL_R * 2 + 6;
+      const value = String(raw.counts[s]);
+      const out = `<g class="count-pill"><title>${label}: ${value}</title><circle cx="${cx + 6}" cy="0" r="6" fill="${color}"/><text x="${cx + 16}" y="4" class="count">${value}</text></g>`;
+      cx += 26 + value.length * 7;
       return out;
     }).join("");
   }
+  if (S.circle) {
+    const node = live.nodes.find((x) => x.node_id === S.circle);
+    if (node && activeProblems(node) !== S.circleCount) loadCircle();
+    else placeCircle();
+  }
   renderFocusNote();
   animateMoves(live);
+}
+
+// Список проблем круга: действующие на момент, в конце серым — решённые внутри промежутка.
+function toggleCircle(nodeId) {
+  if (S.circle === nodeId) { closeCircle(); return; }
+  S.circle = nodeId;
+  renderGraph(S.live);
+  loadCircle();
+}
+function closeCircle() {
+  S.circle = null;
+  $("circle-pop").classList.add("hidden");
+  if (S.live) renderGraph(S.live);
+}
+function placeCircle() {
+  const pop = $("circle-pop");
+  const anchor = $("graph").querySelector(`.node[data-node="${CSS.escape(S.circle)}"] [data-badge]`);
+  if (!anchor) { pop.classList.add("hidden"); return; }
+  // Список привязан к окну, а не к графу: высота графа его не обрезает.
+  const r = anchor.getBoundingClientRect();
+  const graph = $("graph").getBoundingClientRect();
+  // Круг ушёл за край графа или окна — список прячется и вернётся вместе с кругом.
+  const visible = r.bottom > Math.max(0, graph.top) && r.top < Math.min(innerHeight, graph.bottom) && r.right > graph.left && r.left < graph.right;
+  pop.classList.toggle("hidden", !visible);
+  const top = r.bottom + 6;
+  pop.style.left = `${Math.max(8, Math.min(r.left - 150, innerWidth - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${top}px`;
+  pop.style.maxHeight = `${Math.max(180, Math.min(420, innerHeight - top - 12))}px`;
+}
+window.addEventListener("scroll", () => { if (S.circle) placeCircle(); }, { passive: true });
+window.addEventListener("resize", () => { if (S.circle) placeCircle(); });
+async function loadCircle() {
+  const nodeId = S.circle;
+  if (!nodeId) return;
+  const machines = lane() === "machines";
+  const q = new URLSearchParams({ node: nodeId, lane: machines ? "machines" : "items", since: new Date(sinceMs()).toISOString() });
+  if (S.at) q.set("at", S.at);
+  const data = await api(`/api/lines/${S.lineId}/problems?${q}`);
+  if (S.circle !== nodeId) return;
+  S.circleCount = data.active.length;
+  const pop = $("circle-pop");
+  const row = (p, resolved) => `<li class="problem ${resolved ? "resolved" : machines ? "sev-major" : problemClass(p)} ${focus()?.problem_id === p.problem_id ? "focused" : ""}" data-pop="${esc(p.problem_id)}">
+      <div class="row spread"><b class="small">${esc(p.title)}</b><span class="small">${resolved ? `Решено ${time(p.resolved_at, true)}` : p.resolved_now ? "Решено позднее" : esc(machines ? p.equipment_id : p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div>
+      <div class="muted small">${machines ? `Станок <span class="mono">${esc(p.equipment_id)}</span>. ${esc(machineNote(p))}` : `Изделие <span class="mono">${esc(p.item_id)}</span>.`} Обнаружено ${time(p.at, true)}.</div></li>`;
+  pop.innerHTML = `<div class="pop-head"><b>${esc(nodeTitle(nodeId))}</b><span class="muted small">На ${S.at ? time(S.at, true) : "текущий момент"}</span><button class="btn small" data-pop-close aria-label="Закрыть список">✕</button></div>
+    <div class="pop-body">${data.active.length ? `<ul class="list">${data.active.map((p) => row(p, false)).join("")}</ul>` : `<div class="empty">Действующих проблем нет.</div>`}
+    ${data.resolved.length ? `<div class="pop-sep">Решено за промежуток: ${data.resolved_total}</div><ul class="list">${data.resolved.map((p) => row(p, true)).join("")}</ul>` : ""}</div>`;
+  pop.classList.remove("hidden");
+  placeCircle();
+  pop.querySelector("[data-pop-close]").addEventListener("click", closeCircle);
+  const all = [...data.active, ...data.resolved];
+  pop.querySelectorAll("[data-pop]").forEach((el) => el.addEventListener("click", () => {
+    const p = all.find((x) => x.problem_id === el.dataset.pop);
+    S.focusByLane[lane()] = { lane: lane(), problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
+    pop.querySelectorAll("[data-pop]").forEach((x) => x.classList.toggle("focused", x === el));
+    renderGraph(S.live);
+    renderTimeline();
+    if (machines) openNode(p.node_id);
+    else openProblem(p.problem_id);
+  }));
 }
 
 // Выделение выбранной проблемы держится при любом положении шкалы: кольцо вокруг этапа и
@@ -418,10 +497,9 @@ function animateMoves(live) {
     setTimeout(() => ball.remove(), 1200);
     started += 1;
   }
-  const total = (n) => n.problems.nonconformance + n.problems.not_assessable + n.problems.nonconformance_resolved + n.problems.not_assessable_resolved;
   for (const n of live.nodes) {
     const before = S.prevNodes[n.node_id];
-    if (before && total(before) !== total(n)) flash(g.pos[n.node_id]);
+    if (before && activeProblems(before) !== activeProblems(n)) flash(g.pos[n.node_id]);
   }
   S.prevNodes = Object.fromEntries(live.nodes.map((n) => [n.node_id, n]));
   S.prevItems = next;
@@ -504,18 +582,16 @@ function renderMoment() {
   $("to-live")?.addEventListener("click", goLive);
 }
 
-const MARK_TITLE = {
-  problem: (m) => `${m.problem_kind === "not_assessable" ? "Оценка невозможна" : `Несоответствие: ${m.title}`}, изделие ${m.item_id}`,
-  resolved: (m) => `${{ closed: "Устранено", rejected: "Сигнал отклонён", rechecked: "Повторная проверка выполнена" }[m.resolution] || "Решено"}: ${m.title}, изделие ${m.item_id}`,
-  machine_fault: (m) => `Сбой станка ${m.equipment_id}${m.message ? `: ${m.message}` : ""}`,
-  machine_ok: (m) => `Станок ${m.equipment_id} вернулся в работу`,
-};
-
-function markerClass(m) {
-  if (m.kind === "problem") return m.problem_kind === "not_assessable" ? "m-amber" : `m-bad sev-${m.severity || "major"}`;
-  if (m.kind === "machine_fault") return "m-bad";
-  return "m-ok";
+// На шкале три цвета: красный — проблема, жёлтый — оценка невозможна, зелёный — решено.
+// Критичность на шкале не различается, она видна в очереди и в карточке.
+const RESOLUTION = { closed: "Устранено", rejected: "Сигнал отклонён", rechecked: "Повторная проверка выполнена", restored: "Станок вернулся в работу" };
+function markTitle(m) {
+  const what = m.lane === "machines"
+    ? `${m.title}, станок ${m.equipment_id}${m.note ? `: ${m.note}` : ""}`
+    : `${m.problem_kind === "not_assessable" ? "Оценка невозможна" : `Несоответствие: ${m.title}`}, изделие ${m.item_id}`;
+  return m.kind === "resolved" ? `${RESOLUTION[m.resolution] || "Решено"}. ${what}` : what;
 }
+const markerClass = (m) => (m.kind === "resolved" ? "m-ok" : m.problem_kind === "not_assessable" ? "m-amber" : "m-bad");
 
 function renderTimeline() {
   const t = S.timeline;
@@ -525,10 +601,13 @@ function renderTimeline() {
   const pos = (ms) => Math.min(100, Math.max(0, ((ms - start) / (end - start)) * 100));
   const current = lane();
   const f = focus();
-  const markers = t.markers.map((m, i) => ({ ...m, i })).filter((m) => m.lane === current);
+  const markers = t.markers.map((m, i) => ({ ...m, i })).filter((m) => m.lane === current && !(S.hideResolved && m.kind === "resolved"));
   const legend = current === "items"
-    ? `<i class="m-bad"></i>Несоответствие <i class="m-amber"></i>Оценка невозможна <i class="m-ok"></i>Решено`
-    : `<i class="m-bad"></i>Сбой станка <i class="m-ok"></i>Станок в работе`;
+    ? `<i class="m-bad"></i>Проблема <i class="m-amber"></i>Оценка невозможна${S.hideResolved ? "" : ` <i class="m-ok"></i>Решено`}`
+    : `<i class="m-bad"></i>Сбой станка${S.hideResolved ? "" : ` <i class="m-ok"></i>Станок в работе`}`;
+  // Возникновение и решение выбранной проблемы связаны линией: видно, сколько она действовала.
+  const pair = f ? markers.filter((m) => m.problem_id === f.problem_id) : [];
+  const link = pair.length === 2 ? `<div class="tl-link" style="left:${pos(new Date(pair[0].at).getTime())}%;width:${pos(new Date(pair[1].at).getTime()) - pos(new Date(pair[0].at).getTime())}%"></div>` : "";
   const laneSwitch = laneFixed() ? "" : `<div class="seg" role="group" aria-label="Вид отслеживания">${[["items", "Дефекты"], ["machines", "Отклонения"]].map(([k, l]) => `<button class="btn small ${current === k ? "active" : ""}" data-lane="${k}">${l}</button>`).join("")}</div>`;
   $("timeline").innerHTML = `
     <div class="tl-head">
@@ -540,16 +619,17 @@ function renderTimeline() {
         <button class="btn small ${S.at ? "" : "active"}" data-tl="live">Сейчас</button>
         <div class="seg" role="group" aria-label="Длина промежутка">${Object.entries(WINDOWS).map(([k, l]) => `<button class="btn small ${S.windowMode === k && !S.range.since ? "active" : ""}" data-window="${k}">${l}</button>`).join("")}</div>
         ${laneSwitch}
+        <button class="btn small ${S.hideResolved ? "active" : ""}" data-tl="hide" title="Скрыть зелёные отметки решённых проблем">${S.hideResolved ? "Показать решённые" : "Скрыть решённые"}</button>
       </div>
       <div class="muted small">Промежуток: <b>${time(new Date(lo).toISOString(), true)}</b> — <b>${S.range.until ? time(S.range.until, true) : "сейчас"}</b> · <span class="tl-key">${legend}</span></div>
     </div>
     <div class="tl-track" id="tl-track">
-      <div class="tl-markers">${markers.map((m) => {
-        const focused = f && ((m.problem_id && m.problem_id === f.problem_id) || (!m.problem_id && f.node_id === m.node_id && f.at === m.at));
+      <div class="tl-markers">${link}${markers.map((m) => {
+        const focused = f && m.problem_id === f.problem_id;
         const outside = new Date(m.at).getTime() < lo || new Date(m.at).getTime() > hi;
-        return `<button class="tl-mark ${markerClass(m)} ${focused ? "focused" : ""} ${outside ? "outside" : ""}" style="left:${pos(new Date(m.at).getTime())}%" data-mark="${m.i}" title="${esc(`${time(m.at, true)}. ${MARK_TITLE[m.kind](m)}`)}"></button>`;
+        return `<button class="tl-mark ${markerClass(m)} ${focused ? "focused" : ""} ${outside ? "outside" : ""}" style="left:${pos(new Date(m.at).getTime())}%" data-mark="${m.i}" title="${esc(`${time(m.at, true)}. ${markTitle(m)}`)}"></button>`;
       }).join("")}</div>
-      <div class="tl-rail"><div class="tl-sel" style="left:${pos(lo)}%;width:${Math.max(0.3, pos(hi) - pos(lo))}%"></div>
+      <div class="tl-rail"><div class="tl-sel" title="Перетащите, чтобы сдвинуть промежуток целиком" style="left:${pos(lo)}%;width:${Math.max(0.3, pos(hi) - pos(lo))}%"></div>
         <button class="tl-handle" data-handle="since" style="left:${pos(lo)}%" aria-label="Начало промежутка" title="Начало промежутка"></button>
         <button class="tl-handle end" data-handle="until" style="left:${pos(hi)}%" aria-label="Конец промежутка" title="Конец промежутка: момент, который показывает граф"></button></div>
     </div>
@@ -560,15 +640,45 @@ function renderTimeline() {
   box.querySelector('[data-tl="back"]').addEventListener("click", () => shiftRange(-600000));
   box.querySelector('[data-tl="fwd"]').addEventListener("click", () => shiftRange(600000));
   box.querySelector('[data-tl="live"]').addEventListener("click", goLive);
+  box.querySelector('[data-tl="hide"]').addEventListener("click", () => { S.hideResolved = !S.hideResolved; renderTimeline(); });
   box.querySelector('[data-tl="speed"]').addEventListener("change", (e) => { S.playSpeed = Number(e.target.value); });
   box.querySelector('[data-tl="play"]').addEventListener("click", () => (S.playing ? stopPlaying() : startPlaying()));
   box.querySelectorAll("[data-window]").forEach((b) => b.addEventListener("click", () => { S.windowMode = b.dataset.window; S.range.since = null; renderTimeline(); refreshAll(); }));
-  box.querySelectorAll("[data-lane]").forEach((b) => b.addEventListener("click", () => { S.lane = b.dataset.lane; renderTimeline(); if (S.live) renderGraph(S.live); }));
+  box.querySelectorAll("[data-lane]").forEach((b) => b.addEventListener("click", () => { S.lane = b.dataset.lane; renderTimeline(); if (S.circle) loadCircle(); if (S.live) renderGraph(S.live); }));
 }
 
-// Ползунки тянутся мышью; конец промежутка у правого края — это «сейчас».
+// Ползунки тянутся мышью; конец промежутка у правого края — это «сейчас». Сам промежуток
+// перетаскивается целиком: длина сохраняется, сдвигаются обе границы.
 function bindHandles(box, start, end) {
   const rail = box.querySelector(".tl-rail");
+  const sel = rail.querySelector(".tl-sel");
+  sel.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const rect = rail.getBoundingClientRect();
+    const lo0 = sinceMs(), hi0 = untilMs(), width = hi0 - lo0;
+    const span = end - start;
+    let lo = lo0;
+    sel.classList.add("dragging");
+    const move = (ev) => {
+      const delta = ((ev.clientX - e.clientX) / rect.width) * span;
+      lo = Math.min(Math.max(start, lo0 + delta), end - width);
+      const pct = (ms) => `${((ms - start) / span) * 100}%`;
+      sel.style.left = pct(lo);
+      rail.querySelector('[data-handle="since"]').style.left = pct(lo);
+      rail.querySelector('[data-handle="until"]').style.left = pct(lo + width);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      sel.classList.remove("dragging");
+      if (lo === lo0) return;
+      S.range.since = new Date(lo).toISOString();
+      S.range.until = lo + width >= end - 1000 ? null : new Date(lo + width).toISOString();
+      applyRange();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
   box.querySelectorAll(".tl-handle").forEach((h) => h.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     const which = h.dataset.handle;
@@ -646,23 +756,25 @@ function stopPlaying() {
   if (S.view === "line" && S.timeline) renderTimeline();
 }
 
-// Отметка на шкале: переход к её моменту, фокус на событии, подробности во вкладке.
+// Отметка на шкале: переход к её моменту, фокус на проблеме, подробности под линией.
+// Проблема изделия открывается вместе с изделием, сбой станка — во вкладке этапа.
 async function selectMarker(m) {
-  const focusValue = { lane: m.lane, problem_id: m.problem_id || null, node_id: m.node_id, item_id: m.item_id || null, at: m.at, title: m.problem_id ? m.title : MARK_TITLE[m.kind](m), kind: m.kind };
-  S.focusByLane[m.lane] = focusValue;
+  S.focusByLane[m.lane] = { lane: m.lane, problem_id: m.problem_id, node_id: m.node_id, item_id: m.item_id || null, at: m.at, title: m.title, kind: m.kind };
   selectNode(m.node_id);
   await jumpTo(m.at);
-  if (m.problem_id) await openProblem(m.problem_id);
-  else await openNode(m.node_id);
+  if (m.lane === "machines") await openNode(m.node_id);
+  else await openProblem(m.problem_id);
 }
 
 // Проблема из очереди: фокус и переход к моменту обнаружения выполняются сразу.
 async function selectProblem(p) {
-  S.focusByLane.items = { lane: "items", problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
-  if (!laneFixed()) S.lane = "items";
+  const where = p.kind === "machine" ? "machines" : "items";
+  S.focusByLane[where] = { lane: where, problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
+  if (!laneFixed()) S.lane = where;
   selectNode(p.node_id);
   await jumpTo(p.at);
-  await openProblem(p.problem_id);
+  if (where === "machines") await openNode(p.node_id);
+  else await openProblem(p.problem_id);
 }
 
 // --- этапы: развёртка графа сверху, в ширину графа ------------------------------------------------------------
@@ -773,11 +885,15 @@ async function refreshOverview() {
   renderRolePanel();
 }
 
-// Очередь проблем всегда о настоящем: она не следует за шкалой времени.
+// Очередь проблем всегда о настоящем: она не следует за шкалой времени. У технолога рядом
+// с ней очередь сбоев оборудования.
 async function refreshQueue() {
   if (S.view !== "line") return;
-  S.queue = await api(`/api/lines/${S.lineId}/problems`);
-  if (S.viewRole === "controller") renderRolePanel();
+  const tech = S.viewRole === "technologist";
+  const [queue, machines] = await Promise.all([api(`/api/lines/${S.lineId}/problems`), tech ? api(`/api/lines/${S.lineId}/problems?lane=machines`) : null]);
+  S.queue = queue;
+  S.machineQueue = machines;
+  if (S.viewRole === "controller" || tech) renderRolePanel();
 }
 
 const kpi = (value, label, tone = "") => `<div class="kpi"><b class="${tone}">${value}</b><span>${esc(label)}</span></div>`;
@@ -785,14 +901,22 @@ const nodeTitle = (id) => S.geometry?.pos[id]?.title || id;
 const SEVERITY = { critical: "Критичное", major: "Значительное", minor: "Малозначительное" };
 const problemClass = (p) => (p.kind === "not_assessable" ? "sev-amber" : `sev-${p.severity || "major"}`);
 
-function queueList(q) {
+// Сообщение станка о сбое с заглавной буквы; без сообщения — сколько раз станок сообщил.
+const machineNote = (p) => (p.note ? `${p.note[0].toUpperCase()}${p.note.slice(1)}.` : `Сообщений о сбое: ${p.reports}.`);
+
+function queueList(q, { machines = false } = {}) {
   if (!q) return `<div class="empty">Загрузка.</div>`;
-  const f = S.focusByLane.items;
-  const row = (p, resolved = false) => `<li class="problem ${resolved ? "resolved" : problemClass(p)} ${f?.problem_id === p.problem_id ? "focused" : ""}" data-problem="${esc(p.problem_id)}">
-      <div class="row spread"><b>${esc(p.title)}</b><span class="small">${resolved ? esc({ closed: "Устранено", rejected: "Сигнал отклонён", rechecked: "Проверено повторно" }[p.resolution] || "Решено") : esc(p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div>
-      <div class="small">Изделие <span class="mono">${esc(p.item_id)}</span>. ${esc(nodeTitle(p.node_id))}.</div>
+  const f = S.focusByLane[machines ? "machines" : "items"];
+  const what = (p, resolved) => {
+    if (resolved) return RESOLUTION[p.resolution] || "Решено";
+    if (machines) return "Не устранён";
+    return p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "";
+  };
+  const row = (p, resolved = false) => `<li class="problem ${resolved ? "resolved" : machines ? "sev-major" : problemClass(p)} ${f?.problem_id === p.problem_id ? "focused" : ""}" data-problem="${esc(p.problem_id)}">
+      <div class="row spread"><b>${esc(p.title)}</b><span class="small">${esc(what(p, resolved))}</span></div>
+      <div class="small">${machines ? `${esc(nodeTitle(p.node_id))}, станок <span class="mono">${esc(p.equipment_id)}</span>. ${esc(machineNote(p))}` : `Изделие <span class="mono">${esc(p.item_id)}</span>. ${esc(nodeTitle(p.node_id))}.`}</div>
       <div class="muted small">Обнаружено ${time(p.at, true)}${resolved ? `. Решено ${time(p.resolved_at, true)}` : ""}.</div></li>`;
-  return `${q.active.length ? `<ul class="list">${q.active.map((p) => row(p)).join("")}</ul>` : `<div class="empty">Активных проблем нет.</div>`}
+  return `${q.active.length ? `<ul class="list">${q.active.map((p) => row(p)).join("")}</ul>` : `<div class="empty">Действующих проблем нет.</div>`}
     <h3>Решено · ${q.resolved_total}</h3>${q.resolved.length ? `<ul class="list">${q.resolved.slice(0, 15).map((p) => row(p, true)).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
 }
 
@@ -831,11 +955,14 @@ function renderRolePanel() {
       <h3>Отклонения оборудования</h3>${o.deviations.length ? `<ul class="list">${o.deviations.map((d) => `<li class="click" data-node="${esc(d.node_id)}"><b>${esc(d.equipment_id)}</b> ${badge(MACHINE_STATE[d.state]?.[1] || d.state, "warn")}<div class="muted small">${time(d.at, true)}</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
       <h3>Пропуски сообщений</h3>${Object.keys(o.source_gaps).length ? `<ul class="plain">${Object.entries(o.source_gaps).map(([s, g]) => `<li class="mono small">${esc(s)}: №${g.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(", ")}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}`;
   } else if (role === "technologist") {
-    const entries = Object.entries(o.origins_by_node);
-    const max = Math.max(1, ...entries.map(([, v]) => v));
-    html = `<div class="card-head"><h2>Этапы возникновения дефектов</h2></div>${entries.length ? `<div class="bars">${entries.map(([node, v]) => `<div class="bar-row" data-node="${esc(node)}"><small>${esc(nodeTitle(node))}</small><div class="bar"><i style="width:${(v / max) * 100}%"></i></div><b>${v}</b></div>`).join("")}</div>` : `<div class="empty">Нет.</div>`}
-      <h3>Сбои оборудования</h3>${machinesList(o.machines || [])}
-      <h3>Гипотезы без подтверждения</h3>${Object.keys(o.hypotheses).length ? `<ul class="plain">${Object.entries(o.hypotheses).map(([c, v]) => `<li>${esc(L.cause[c] || c)}: ${v}</li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
+    // Технолог работает со станками: его очередь — сбои оборудования. Подтверждённые
+    // несоответствия остаются отдельным списком, потому что причину по ним устанавливает он.
+    const n = S.machineQueue?.active.length ?? 0;
+    const confirmed = (S.queue?.active || []).filter((p) => p.kind === "nonconformance" && p.status === "confirmed");
+    html = `<div class="card-head"><h2>Проблемы оборудования</h2>${badge(n, n ? "bad" : "ok")}</div>
+      <p class="muted small">Сбои станков линии на текущий момент. Шкала времени на список не влияет.</p>${queueList(S.machineQueue, { machines: true })}
+      <h3>Состояние станков</h3>${machinesList(o.machines || [])}
+      <h3>Ждут установления причины · ${confirmed.length}</h3>${confirmed.length ? `<ul class="list">${confirmed.slice(0, 10).map((p) => `<li class="click" data-nc="${esc(p.problem_id)}"><b class="small">${esc(p.title)}</b><div class="muted small">Изделие <span class="mono">${esc(p.item_id)}</span>. ${esc(nodeTitle(p.node_id))}.</div></li>`).join("")}</ul>` : `<div class="empty">Нет.</div>`}
       <button class="btn small" data-ocel style="margin-top:10px">Выгрузка OCEL 2.0</button>`;
   } else if (role === "manager") {
     html = `<div class="card-head"><h2>Показатели линии</h2></div><div class="kpis">${kpi(k.items, "Изделий")}${kpi(k.conforming, "Годно")}${kpi(k.nonconforming, "С несоответствием", k.nonconforming ? "bad-text" : "")}${kpi(k.rework_runs, "Доработок")}${kpi(k.open_nonconformances, "Ждут решения")}${kpi(k.confirmed, "Подтверждено")}</div>
@@ -848,7 +975,7 @@ function renderRolePanel() {
   panel.innerHTML = html;
   bindCommon(panel);
   panel.querySelectorAll("[data-problem]").forEach((el) => el.addEventListener("click", () => {
-    const all = [...(S.queue?.active || []), ...(S.queue?.resolved || [])];
+    const all = [S.queue, S.machineQueue].flatMap((q) => [...(q?.active || []), ...(q?.resolved || [])]);
     const p = all.find((x) => x.problem_id === el.dataset.problem);
     if (p) selectProblem(p);
   }));
@@ -870,15 +997,19 @@ function bindCommon(root) {
 
 // --- подробности под линией: вкладки ---------------------------------------------------------------------------
 
-// Вкладки подготовлены заранее и заполняются только по нажатию на событие. Пока ничего не
-// выбрано, в каждой вкладке — описание того, что в ней появится.
+// Вкладки подготовлены заранее и заполняются только по нажатию на событие. Изделие и
+// проблема — одна вкладка из двух половин: слева изделие, справа проблема. Выбор проблемы
+// сразу открывает и её изделие; выбор изделия справа показывает его проблемы.
 const TABS = [
-  ["problem", "Проблема", "Выберите проблему в очереди, отметку на шкале времени или метку на этапе. Здесь появятся исходные сообщения анализатора, разбор системы и решения людей."],
-  ["item", "Изделие", "Выберите изделие. Здесь появится его маршрут по этапам в хронологии: проблемный проход и повторный проход показаны отдельно."],
+  ["pair", "Изделие и проблема", ""],
   ["stage", "Этап", "Выберите этап на графе или в таблице этапов. Здесь появятся его показатели за выбранный промежуток, станок и изделия."],
   ["items", "Изделия линии", "Нажмите «Изделия» в шапке. Здесь появится таблица изделий с фильтрами по столбцам."],
   ["economics", "Экономика", "Нажмите «Экономика» в шапке. Здесь появятся потери, затраты на годное изделие и параметры расчёта."],
 ];
+const PAIR_HINT = {
+  item: "Здесь появится изделие выбранной проблемы: его маршрут по этапам в хронологии, проблемный и повторный проходы отдельно.",
+  problem: "Выберите проблему в очереди, отметку на шкале времени или проблему в круге над этапом. Здесь появятся сообщения анализатора, разбор системы и решения людей.",
+};
 
 function detailsFrame(active) {
   return `<div class="tabs" role="tablist">${TABS.map(([k, title]) => `<button class="tab ${k === active ? "active" : ""} ${S.filled?.[k] ? "filled" : ""}" data-tab="${k}" role="tab">${title}</button>`).join("")}</div><div class="tab-body" id="tab-body"></div>`;
@@ -888,7 +1019,9 @@ function detailsEmpty() {
   S.detail = null;
   S.filled = {};
   S.tabHtml = {};
-  showTab("problem");
+  S.tabBind = {};
+  S.pair = { item: null, problem: null };
+  renderPair({ quiet: true });
 }
 
 function showTab(tab) {
@@ -911,6 +1044,19 @@ function details(tab, html, state = {}, bind = null) {
   if (!state.quiet) $("details").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+function renderPair({ quiet = false } = {}) {
+  const side = (k) => `<div class="pair-side" data-side="${k}">${S.pair[k]?.html || `<div class="tab-hint">${esc(PAIR_HINT[k])}</div>`}</div>`;
+  const html = `<div class="pair">${side("item")}${side("problem")}</div>`;
+  const bind = (body) => ["item", "problem"].forEach((k) => S.pair[k]?.bind?.(body.querySelector(`[data-side="${k}"]`)));
+  if (!S.pair.item && !S.pair.problem) {
+    S.tabHtml = { ...(S.tabHtml || {}), pair: html };
+    S.tabBind = { ...(S.tabBind || {}), pair: bind };
+    showTab("pair");
+    return;
+  }
+  details("pair", html, { pair: true, quiet, refresh: () => (S.pair.item ? loadItemSide(S.pair.item.id).then(() => renderPair({ quiet: true })) : null) }, bind);
+}
+
 async function openNode(nodeId) {
   const load = async () => {
     const [d, all] = await Promise.all([api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery()}`), api(`/api/lines/${S.lineId}/stages/${encodeURIComponent(nodeId)}?${stageQuery({ total: true })}`)]);
@@ -928,24 +1074,6 @@ async function openNode(nodeId) {
         ${d.items.length ? `<h3>Изделия на этапе</h3><table>${d.items.slice(0, 20).map((r) => `<tr class="click" data-item="${esc(r.item_id)}"><td class="mono small">${esc(r.item_id)}</td><td>${op ? esc(L.runOutcome[r.outcome] || r.outcome) : badge(...(L.result[r.outcome] || [r.outcome]))}</td><td class="muted small">${time(r.at, true)}</td></tr>`).join("")}</table>` : ""}</div>
         <div>${d.machine ? machinePanel(d.machine) : ""}</div></div>`,
     { node: nodeId, refresh: () => load(), quiet: true });
-  };
-  await load();
-}
-
-// Проблемы этапа на выбранный момент: активные и решённые позднее, одной записью на проблему.
-async function openStageProblems(nodeId) {
-  const load = async () => {
-    const data = await api(withAt(`/api/lines/${S.lineId}/problems`));
-    const here = data.active.filter((p) => p.node_id === nodeId);
-    details("problem", `<div class="card-head"><h2>${esc(nodeTitle(nodeId))}</h2><span class="muted small">На ${S.at ? time(S.at, true) : "текущий момент"}</span></div>
-      ${here.length ? `<ul class="list">${here.map((p) => `<li class="problem ${p.resolved_now ? "resolved" : problemClass(p)}" data-problem="${esc(p.problem_id)}"><div class="row spread"><b>${esc(p.title)}</b><span class="small">${p.resolved_now ? "Решено позднее" : esc(p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div><div class="small">Изделие <span class="mono">${esc(p.item_id)}</span>. Обнаружено ${time(p.at, true)}.</div></li>`).join("")}</ul>` : `<div class="empty">На этот момент проблем на этапе нет.</div>`}`,
-    { node: nodeId, refresh: load }, (body) => body.querySelectorAll("[data-problem]").forEach((el) => el.addEventListener("click", () => {
-      const p = here.find((x) => x.problem_id === el.dataset.problem);
-      S.focusByLane.items = { lane: "items", problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
-      renderGraph(S.live);
-      renderTimeline();
-      openProblem(p.problem_id);
-    })));
   };
   await load();
 }
@@ -980,50 +1108,76 @@ function machinePanel(m) {
 
 // Маршрут изделия в хронологии: каждое прохождение этапа — отдельный шаг. Проблемный
 // проход и повторный проход того же этапа не сливаются.
-async function openItem(itemId) {
-  const load = async () => {
-    const path = await api(withAt(`/api/items/${encodeURIComponent(itemId)}/path`));
-    const chain = (path.visits || []).map((v) => `<div class="hop vt-${v.label}"><div class="node-chip" data-node="${esc(v.node_id)}" title="${esc(L.visit[v.label] || v.label)}"><b>${esc(v.title)}</b><span class="small">${esc(L.visit[v.label] || v.label)}</span>${v.at ? `<span class="muted small">${time(v.at, true)}</span>` : ""}</div><div class="arrow"></div></div>`).join("");
-    const steps = path.route.map((n) => {
-      const runs = n.runs.map((r) => `<div class="small">${r.rework ? badge("Доработка", "info") + " " : ""}Оператор <span class="mono">${esc(r.operator_id || "не указан")}</span>, ${time(r.started_at, true)}, ${mins(r.active_s)}</div>`).join("");
-      const checks = n.checks.map((c) => `<div class="small">${badge(...(L.result[c.result] || [c.result]))} ${time(c.at, true)}, уверенность ${c.confidence ?? "не указана"}${c.reliable ? "" : " " + badge(c.note || "Недостоверно", "warn")}</div>`).join("");
-      const ncs = n.nonconformances.map((x) => `<div class="small"><a href="#" data-nc="${esc(x.nc_id)}">${esc(x.defect_type)}</a> ${badge({ detected: "Обнаружен здесь", origin: "Возник здесь", possible_origin: "Мог возникнуть здесь" }[x.role], x.role === "detected" ? "bad" : "warn")}</div>`).join("");
-      return `<div class="st-${n.status}"><b>${esc(n.title)}</b> <span class="muted small">${esc(n.equipment_id || "")}</span>${runs}${checks}${ncs}${!runs && !checks ? `<div class="muted small">${esc(L.pathStatus[n.status])}</div>` : ""}</div>`;
-    }).join("");
-    details("item", `<div class="card-head"><h2 class="mono">${esc(path.item_id)}</h2>${badge(...(L.status[path.status] || [path.status]))}</div>
-      <div class="muted small">${esc(path.item_type_id)}${path.parent_id ? `. В составе <a href="#" data-item="${esc(path.parent_id)}">${esc(path.parent_id)}</a>` : ""}${path.components.length ? `. Компоненты: ${path.components.map((c) => `<a href="#" data-item="${esc(c)}">${esc(c)}</a>`).join(", ")}` : ""}</div>
-      <div class="route">${chain}</div>
-      <div class="legend">${["passed", "possible_origin", "origin", "defect", "not_assessable", "rework", "ok", "pending"].map((k) => `<span class="vt-key vt-${k}"><i></i>${L.visit[k]}</span>`).join("")}</div>
-      <h3>По этапам</h3><div class="steps">${steps}</div>`, { item: itemId, refresh: load });
-  };
-  try { await load(); } catch (error) { notify(error.message, true); }
+async function loadItemSide(itemId) {
+  const path = await api(withAt(`/api/items/${encodeURIComponent(itemId)}/path`));
+  const chain = (path.visits || []).map((v) => `<div class="hop vt-${v.label}"><div class="node-chip" data-node="${esc(v.node_id)}" title="${esc(L.visit[v.label] || v.label)}"><b>${esc(v.title)}</b><span class="small">${esc(L.visit[v.label] || v.label)}</span>${v.at ? `<span class="muted small">${time(v.at, true)}</span>` : ""}</div><div class="arrow"></div></div>`).join("");
+  const steps = path.route.map((n) => {
+    const runs = n.runs.map((r) => `<div class="small">${r.rework ? badge("Доработка", "info") + " " : ""}Оператор <span class="mono">${esc(r.operator_id || "не указан")}</span>, ${time(r.started_at, true)}, ${mins(r.active_s)}</div>`).join("");
+    const checks = n.checks.map((c) => `<div class="small">${badge(...(L.result[c.result] || [c.result]))} ${time(c.at, true)}, уверенность ${c.confidence ?? "не указана"}${c.reliable ? "" : " " + badge(c.note || "Недостоверно", "warn")}</div>`).join("");
+    const ncs = n.nonconformances.map((x) => `<div class="small"><a href="#" data-nc="${esc(x.nc_id)}">${esc(x.defect_type)}</a> ${badge({ detected: "Обнаружен здесь", origin: "Возник здесь", possible_origin: "Мог возникнуть здесь" }[x.role], x.role === "detected" ? "bad" : "warn")}</div>`).join("");
+    return `<div class="st-${n.status}"><b>${esc(n.title)}</b> <span class="muted small">${esc(n.equipment_id || "")}</span>${runs}${checks}${ncs}${!runs && !checks ? `<div class="muted small">${esc(L.pathStatus[n.status])}</div>` : ""}</div>`;
+  }).join("");
+  S.pair.item = { id: itemId, html: `<div class="card-head"><h2>Изделие <span class="mono">${esc(path.item_id)}</span></h2>${badge(...(L.status[path.status] || [path.status]))}</div>
+    <div class="muted small">${esc(path.item_type_id)}${path.parent_id ? `. В составе <a href="#" data-item="${esc(path.parent_id)}">${esc(path.parent_id)}</a>` : ""}${path.components.length ? `. Компоненты: ${path.components.map((c) => `<a href="#" data-item="${esc(c)}">${esc(c)}</a>`).join(", ")}` : ""}</div>
+    <div class="route">${chain}</div>
+    <div class="legend">${["passed", "possible_origin", "origin", "defect", "not_assessable", "rework", "ok", "pending"].map((k) => `<span class="vt-key vt-${k}"><i></i>${L.visit[k]}</span>`).join("")}</div>
+    <h3>По этапам</h3><div class="steps">${steps}</div>` };
 }
 
+// Проблемы изделия справа, пока ни одна из них не выбрана: действующие и решённые.
+async function loadItemProblems(itemId) {
+  const data = await api(`/api/lines/${S.lineId}/problems?item=${encodeURIComponent(itemId)}`);
+  const all = [...data.active, ...data.resolved];
+  const row = (p, resolved) => `<li class="problem ${resolved ? "resolved" : problemClass(p)}" data-pick="${esc(p.problem_id)}"><div class="row spread"><b class="small">${esc(p.title)}</b><span class="small">${resolved ? esc(RESOLUTION[p.resolution] || "Решено") : esc(p.kind === "not_assessable" ? "Нужна повторная проверка" : SEVERITY[p.severity] || "")}</span></div><div class="muted small">${esc(nodeTitle(p.node_id))}. Обнаружено ${time(p.at, true)}.</div></li>`;
+  S.pair.problem = { id: null, itemId, html: `<div class="card-head"><h2>Проблемы изделия</h2>${badge(data.active.length, data.active.length ? "bad" : "ok")}</div>
+    ${all.length ? `<ul class="list">${data.active.map((p) => row(p, false)).join("")}${data.resolved.map((p) => row(p, true)).join("")}</ul>` : `<div class="empty">У изделия проблем нет.</div>`}`,
+  bind: (side) => side.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("click", () => {
+    const p = all.find((x) => x.problem_id === el.dataset.pick);
+    S.focusByLane.items = { lane: "items", problem_id: p.problem_id, node_id: p.node_id, item_id: p.item_id, at: p.at, title: p.title, kind: "problem" };
+    if (S.live) renderGraph(S.live);
+    renderTimeline();
+    openProblem(p.problem_id);
+  })) };
+}
+
+async function openItem(itemId) {
+  try {
+    await loadItemSide(itemId);
+    if (S.pair.problem?.itemId !== itemId) await loadItemProblems(itemId);
+    renderPair();
+  } catch (error) { notify(error.message, true); }
+}
+
+// Проблема справа и её изделие слева: при выборе другой проблемы изделие обновляется.
 async function openProblem(problemId) {
-  if (problemId.startsWith("NA-")) return openUnassessable(problemId);
-  return openNc(problemId);
+  try {
+    const itemId = problemId.startsWith("NA-") ? await openUnassessable(problemId) : await openNc(problemId);
+    if (!itemId) return;
+    if (S.pair.item?.id !== itemId) await loadItemSide(itemId);
+    renderPair();
+  } catch (error) { notify(error.message, true); }
 }
 
 async function openUnassessable(problemId) {
   const data = await api(withAt(`/api/lines/${S.lineId}/problems`));
   const now = S.at ? await api(`/api/lines/${S.lineId}/problems`) : data;
   const p = [...data.active, ...data.resolved, ...now.active, ...now.resolved].find((x) => x.problem_id === problemId);
-  if (!p) { notify("Проблема не найдена на выбранный момент.", true); return; }
+  if (!p) { notify("Проблема не найдена на выбранный момент.", true); return null; }
   const later = [...now.resolved].find((x) => x.problem_id === problemId);
-  details("problem", `<div class="card-head"><h2>Оценка невозможна</h2>${badge(later ? "Решено" : "Нужна повторная проверка", later ? "ok" : "warn")}</div>
-    <p class="small">Изделие <a href="#" data-item="${esc(p.item_id)}" class="mono">${esc(p.item_id)}</a>. ${esc(nodeTitle(p.node_id))}. Обнаружено ${time(p.at, true)}.</p>
+  S.pair.problem = { id: problemId, itemId: p.item_id, html: `<div class="card-head"><h2>Оценка невозможна</h2>${badge(later ? "Решено" : "Нужна повторная проверка", later ? "ok" : "warn")}</div>
+    <p class="small">${esc(nodeTitle(p.node_id))}. Обнаружено ${time(p.at, true)}.</p>
     <div class="layer source"><div class="layer-title">Причина</div><div class="small">${esc(p.note || "Анализатор сообщил, что оценка невозможна.")}</div></div>
     <div class="layer system"><div class="layer-title">Оценка системы</div><div class="small">Изделие не признаётся ни годным, ни бракованным. Отсутствие признаков при плохом наблюдении не подтверждает годность, поэтому этап возникновения по этому наблюдению не ограничивается.</div></div>
-    <div class="layer human"><div class="layer-title">Решение</div><div class="small">${later ? `Повторная достоверная проверка выполнена ${time(later.resolved_at, true)}.` : "Требуется повторная проверка изделия."}</div></div>`, { problem: problemId });
+    <div class="layer human"><div class="layer-title">Решение</div><div class="small">${later ? `Повторная достоверная проверка выполнена ${time(later.resolved_at, true)}.` : "Требуется повторная проверка изделия."}</div></div>` };
+  return p.item_id;
 }
 
 async function openNc(ncId) {
   const card = await api(`/api/nonconformances/${encodeURIComponent(ncId)}`);
   const a = card.assessment || {};
   const causes = ["incoming_defect", "equipment_problem", "operator_error", "process_issue", "handling_damage", "other"];
-  details("problem", `<div class="card-head"><h2>${esc(card.defect_type)}</h2>${badge(...(L.nc[card.status] || [card.status]))}</div>
-    <div class="muted small"><a href="#" data-item="${esc(card.item_id)}" class="mono">${esc(card.item_id)}</a>, ${esc(card.nc_id)}, зона ${esc(card.area)}, ${esc(SEVERITY[card.severity] || card.severity)}. Обнаружено ${time(card.first_detected_at, true)}.</div>
-    <div class="detail-grid"><div>
+  S.pair.problem = { id: ncId, itemId: card.item_id, html: `<div class="card-head"><h2>${esc(card.defect_title || card.defect_type)}</h2>${badge(...(L.nc[card.status] || [card.status]))}</div>
+    <div class="muted small">${esc(card.defect_type)}, ${esc(card.nc_id)}, зона ${esc(card.area)}, ${esc(SEVERITY[card.severity] || card.severity)}. Обнаружено ${time(card.first_detected_at, true)}.</div>
     <div class="layer source"><div class="layer-title">1. Сообщения анализатора в исходном виде</div>
       ${card.signals_detail.map((s) => `<div class="small">${badge(...(L.result[s.inspection_result] || [s.inspection_result]))} ${time(s.occurred_at, true)}, ${esc(s.checkpoint_id)}, уверенность ${s.confidence ?? "не указана"}${s.reliable ? "" : " " + badge(s.reliability_note || "Недостоверно", "warn")}<details><summary class="muted small">Исходное сообщение</summary><pre class="raw">${esc(JSON.stringify(s.raw, null, 2))}</pre></details></div>`).join("")}</div>
     <div class="layer system"><div class="layer-title">2. Разбор системы (оценка, не решение)</div>
@@ -1031,12 +1185,11 @@ async function openNc(ncId) {
       <h3>Основания</h3><ul class="plain small">${(a.evidence || []).map((e) => `<li>${esc(e.text)}</li>`).join("") || "<li>Нет.</li>"}</ul>
       <h3>Альтернативные причины</h3><ul class="plain small">${(a.alternatives || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>Нет.</li>"}</ul>
       <h3>Недостающие сведения</h3><ul class="plain small">${(a.missing || []).map((t) => `<li>${esc(t)}</li>`).join("") || "<li>Не отмечены.</li>"}</ul></div>
-    </div><div>
     <div class="layer human"><div class="layer-title">3. Решения людей (отдельные записи журнала)</div>
       ${card.decisions.length ? `<ul class="plain small">${card.decisions.map((d) => `<li>${time(d.decided_at, true)}, <span class="mono">${esc(d.author_id)}</span>: ${esc(L.action[d.action] || d.action)}${d.cause_category ? ` (${esc(L.cause[d.cause_category])})` : ""}. <span class="muted">${esc(d.reason)}</span></li>`).join("")}</ul>` : `<div class="empty">Решений нет.</div>`}
-      ${S.at && card.allowed_actions.length ? `<p class="muted small">Линия показана на ${time(S.at, true)}. Решение фиксируется текущим временем.</p>` : ""}${card.allowed_actions.length ? `<form id="decision" class="form" style="margin-top:8px"><select name="action">${card.allowed_actions.map((x) => `<option value="${x}">${esc(L.action[x])}</option>`).join("")}</select><select name="cause" class="hidden">${causes.map((c) => `<option value="${c}">${esc(L.cause[c])}</option>`).join("")}</select><textarea name="reason" rows="2" placeholder="Обоснование (обязательно)" required></textarea><button class="btn primary">Записать решение</button></form>` : `<p class="muted small">Роль «${esc(session.me.role_title)}» не принимает решений по этой карточке.</p>`}</div>
-    </div></div>`, { nc: ncId }, (body) => {
-    const form = body.querySelector("#decision");
+      ${S.at && card.allowed_actions.length ? `<p class="muted small">Линия показана на ${time(S.at, true)}. Решение фиксируется текущим временем.</p>` : ""}${card.allowed_actions.length ? `<form id="decision" class="form" style="margin-top:8px"><select name="action">${card.allowed_actions.map((x) => `<option value="${x}">${esc(L.action[x])}</option>`).join("")}</select><select name="cause" class="hidden">${causes.map((c) => `<option value="${c}">${esc(L.cause[c])}</option>`).join("")}</select><textarea name="reason" rows="2" placeholder="Обоснование (обязательно)" required></textarea><button class="btn primary">Записать решение</button></form>` : `<p class="muted small">Роль «${esc(session.me.role_title)}» не принимает решений по этой карточке.</p>`}</div>`,
+  bind: (side) => {
+    const form = side.querySelector("#decision");
     if (!form) return;
     const sync = () => form.cause.classList.toggle("hidden", form.action.value !== "confirm_cause");
     form.action.addEventListener("change", sync);
@@ -1046,12 +1199,13 @@ async function openNc(ncId) {
       try {
         await api(`/api/nonconformances/${encodeURIComponent(ncId)}/decisions`, { method: "POST", body: JSON.stringify({ action: form.action.value, reason: form.reason.value, cause_category: form.action.value === "confirm_cause" ? form.cause.value : null }) });
         notify("Решение записано отдельной записью журнала.");
-        openNc(ncId);
+        await openProblem(ncId);
         refreshQueue();
         refreshOverview();
       } catch (error) { notify(error.message, true); }
     });
-  });
+  } };
+  return card.item_id;
 }
 
 async function openItems() {
@@ -1097,12 +1251,12 @@ function openGuide() {
       <section><h3>Роль «${esc(L.role[role])}»</h3><ol>${GUIDE[role].map((g) => `<li>${esc(g)}</li>`).join("")}</ol></section>
       <section><h3>Обзор производства</h3><p>Первый экран содержит все линии предприятия. Для каждой линии указаны схема, число изделий, операций в работе и проблем, ожидающих решения. Красная рамка обозначает линию с проблемами. Фильтр изделий сверху оставляет линии, выпускающие выбранное изделие.</p></section>
       <section><h3>Экран линии</h3><p>В центре расположен граф линии: этапы процесса и связи между ними. Колесо мыши изменяет масштаб, перетаскивание фона сдвигает граф, кнопка <b>⤢</b> вписывает граф целиком.</p>
-        <ul><li>Под каждым этапом в кругах указано число прошедших изделий по статусам: <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> годно, <span class="dot" style="background:var(--bad)"></span> несоответствие, <span class="dot" style="background:var(--amber)"></span> оценка невозможна. Полное значение показывается в подсказке.</li>
-        <li>Над этапом указано число проблем на выбранный момент: <span class="dot" style="background:var(--bad)"></span> несоответствия, <span class="dot" style="background:var(--amber)"></span> оценка невозможна. Проблемы, решённые позднее, при просмотре прошлого показываются серым.</li>
+        <ul><li>Под каждым этапом указано число изделий, прошедших его за выбранный промежуток, по статусам: <span class="dot" style="background:var(--accent)"></span> в работе, <span class="dot" style="background:var(--ok)"></span> годно, <span class="dot" style="background:var(--bad)"></span> несоответствие, <span class="dot" style="background:var(--amber)"></span> оценка невозможна.</li>
+        <li>Красный круг над этапом показывает число проблем, действующих на выбранный момент: у технолога это сбои станка, у остальных ролей проблемы изделий. Нажатие открывает список: действующие проблемы сверху, решённые за промежуток серым в конце. Выбранный круг обведён.</li>
         <li>Выбранная проблема выделяется кольцом вокруг этапа и подписью над графом при любом положении шкалы времени.</li></ul></section>
-      <section><h3>Шкала времени</h3><p>Шкала задаёт промежуток двумя ползунками. Граф показывает состояние линии на конец промежутка, таблица этапов считает показатели внутри промежутка. Длина промежутка выбирается кнопками «Сутки», «Смена», «Всё время»; значение по умолчанию задаётся в конфигурации.</p>
-        <p>Отметки на шкале связаны только с проблемами: красная означает обнаружение несоответствия, янтарная означает, что оценка невозможна, зелёная означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. Решения принимаются только для текущего момента.</p></section>
-      <section><h3>Подробности под линией</h3><p>Вкладки «Проблема», «Изделие», «Этап», «Изделия линии» и «Экономика» заполняются при выборе события. Карточка несоответствия содержит три раздела: исходные сообщения анализатора, разбор системы и решения людей.</p></section>
+      <section><h3>Шкала времени</h3><p>Шкала задаёт промежуток двумя ползунками, промежуток целиком сдвигается перетаскиванием. Граф показывает состояние линии на конец промежутка, числа под этапами и таблица этапов считаются внутри промежутка. Длина промежутка выбирается кнопками «Сутки», «Смена», «Всё время»; значение по умолчанию задаётся в конфигурации.</p>
+        <p>На шкале три цвета: красный означает проблему, жёлтый означает, что оценка невозможна, зелёный означает решение. Для станков красная отметка означает сбой, зелёная означает возврат в работу. У выбранной проблемы возникновение и решение соединены линией. Кнопка «Скрыть решённые» убирает зелёные отметки. Решение, принятое при просмотре прошлого, фиксируется текущим временем.</p></section>
+      <section><h3>Подробности под линией</h3><p>Вкладки «Изделие и проблема», «Этап», «Изделия линии» и «Экономика» заполняются при выборе события. Во вкладке «Изделие и проблема» слева показано изделие, справа проблема; выбор другой проблемы обновляет изделие. Карточка несоответствия содержит три раздела: исходные сообщения анализатора, разбор системы и решения людей.</p></section>
       <section><h3>Этапы процесса</h3><p>Кнопка «Этапы процесса» раскрывает таблицу над графом. В каждой ячейке указано значение за выбранный промежуток и значение на текущий момент. Выбор этапа в таблице и на графе синхронизирован.</p></section>
       <section><h3>Новая линия и оборудование</h3><p>Администратор описывает типы станков и виды дефектов. Технолог регистрирует по типу конкретный станок. Руководитель в блочном редакторе назначает операцию на станок из справочника; обработка и виды дефектов определяются типом станка.</p></section>
       <section><h3>Пульт эмулятора</h3><p>Пульт эмулятора открывается в том же окне кнопкой в шапке. В пульте запускается и останавливается эмуляция линии, вносится дефект в выбранный этап и проигрывается прогон по данным контракта. Система принимает события эмулятора как события обычных источников.</p></section>
@@ -1121,7 +1275,7 @@ const STATUS_EQ = { active: ["В работе", "ok"], maintenance: ["На об�
 function showAdmin(section = S.adminSection || "machine_types") {
   S.view = "admin";
   S.adminSection = section;
-  store.set("zd-view", "admin");
+  store.set(viewKey(), "admin");
   stopPollers();
   stopPlaying();
   closeStages();

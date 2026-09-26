@@ -33,6 +33,7 @@ from zero_defect.lines.views import (
     item_path,
     line_problems,
     live_view,
+    machine_problems,
     plant_card,
     problem_payload,
     stage_items,
@@ -457,46 +458,73 @@ def register(
         return {"line_id": saved.line_id, "version": saved.version}
 
     @app.get("/api/lines/{line_id}/live")
-    def line_live(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
+    def line_live(
+        line_id: str,
+        at: str | None = None,
+        since: str | None = None,
+        _: Principal = Depends(reader),
+    ) -> dict:
         index, state = cache.get(line_id, at)
         return {
-            **live_view(index, state, resolved_now=_resolved_now(line_id) if at else None),
+            **live_view(index, state, since=_moment(since) if since else None),
             "emulation": emulator.status(line_id),
         }
 
-    def _resolved_now(line_id: str) -> set[str]:
-        """Проблемы, решённые к настоящему моменту: в прошлом они показываются бледно."""
-
-        index, state = cache.get(line_id)
-        return {p["problem_id"] for p in line_problems(index, state) if p["resolved_at"]}
-
     @app.get("/api/lines/{line_id}/problems")
-    def problems(line_id: str, at: str | None = None, _: Principal = Depends(reader)) -> dict:
+    def problems(
+        line_id: str,
+        at: str | None = None,
+        since: str | None = None,
+        node: str | None = None,
+        item: str | None = None,
+        lane: str = "items",
+        _: Principal = Depends(reader),
+    ) -> dict:
         """
-        Проблемы линии: активные и решённые. Без at — очередь контролёра, она всегда о
-        настоящем и не зависит от шкалы времени. С at — проблемы на тот момент, у каждой
-        отметка, решена ли она к настоящему.
+        Проблемы линии: действующие на момент и решённые к нему. Без at — очередь
+        контролёра, она всегда о настоящем и не зависит от шкалы времени. С at — проблемы
+        на тот момент, у действующих отметка, решены ли они к настоящему.
+
+        node и item сужают список до этапа или изделия, since отсекает решённые до начала
+        промежутка. lane=machines — проблемы оборудования вместо проблем изделий.
         """
 
+        if lane not in {"items", "machines"}:
+            raise HTTPException(422, "lane: items или machines")
+        source = machine_problems if lane == "machines" else line_problems
         index, state = cache.get(line_id, at)
-        found = line_problems(index, state)
-        done = _resolved_now(line_id) if at else set()
+        found = [
+            p
+            for p in source(index, state)
+            if (node is None or p["node_id"] == node) and (item is None or p["item_id"] == item)
+        ]
+        done = set()
+        if at:
+            now_index, now_state = cache.get(line_id)
+            done = {p["problem_id"] for p in source(now_index, now_state) if p["resolved_at"]}
+        start = _moment(since) if since else None
         rank = {"critical": 0, "major": 1, "minor": 2}
         active = sorted(
             (p for p in found if p["resolved_at"] is None),
             key=lambda p: (rank.get(p["severity"], 3), -p["at"].timestamp()),
         )
         resolved = sorted(
-            (p for p in found if p["resolved_at"] is not None),
+            (
+                p
+                for p in found
+                if p["resolved_at"] is not None and (start is None or p["resolved_at"] >= start)
+            ),
             key=lambda p: p["resolved_at"],
             reverse=True,
         )
+        # Очередь линии показывает последние решённые, список этапа или изделия — все.
+        limit = 200 if node or item else 40
         return {
             "at": at,
             "active": [
                 {**problem_payload(p), "resolved_now": p["problem_id"] in done} for p in active
             ],
-            "resolved": [problem_payload(p) for p in resolved[:40]],
+            "resolved": [problem_payload(p) for p in resolved[:limit]],
             "resolved_total": len(resolved),
         }
 

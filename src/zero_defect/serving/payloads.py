@@ -14,6 +14,7 @@ from datetime import datetime
 from zero_defect.config import DATA_DIR
 from zero_defect.history.projection import MACHINE_DEVIATIONS, Observation, Run
 from zero_defect.ingest.model import SourceEvent
+from zero_defect.lines.catalog import title_of
 from zero_defect.quality.nonconformance import (
     CAUSE_ACTION,
     TRANSITIONS,
@@ -140,6 +141,7 @@ def nc_summary(card: Nonconformance) -> dict:
         "nc_id": card.nc_id,
         "item_id": card.item_id,
         "defect_type": card.defect_type,
+        "defect_title": title_of(card.defect_type),
         "area": card.area,
         "severity": card.severity,
         "status": card.status,
