@@ -738,3 +738,26 @@ def test_emulation_starts_new_items_only_while_someone_watches():
     emulator.tick(time.time())
     assert emulator.status(config.line_id)["sets_started"] == 1
     emulator.shutdown()
+
+
+def test_emulation_stops_at_the_event_ceiling_even_while_watched():
+    from zero_defect.lines.emulator import LiveEmulator
+
+    config = default_lines()[1]
+
+    def sets_after_a_minute(ceiling: int) -> int:
+        emulator = LiveEmulator(lambda events: None, lambda line_id: config)
+        emulator.MAX_EVENTS = ceiling
+        emulator.start(config.line_id)
+        start = time.time()
+        # Зритель смотрит всё время: каждую секунду экран линии опрашивает сервис.
+        for step in range(60):
+            emulator._watched[config.line_id] = start + step
+            emulator.tick(start + step)
+        emulator.shutdown()
+        return emulator.status(config.line_id)["sets_started"]
+
+    unlimited = sets_after_a_minute(10**9)
+    capped = sets_after_a_minute(1)
+    assert unlimited > 2, "без потолка линия запускает комплект за комплектом"
+    assert capped < unlimited, "с потолком новые комплекты не запускаются"

@@ -3,6 +3,8 @@ name = "zero-defect"
 version = "0.1.0"
 description = "Traceability and nonconformance analysis for space-industry parts on a closed production line"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.14"
 
 # Основной набор — ровно то, что импортирует работающий сервис. Распознавания по

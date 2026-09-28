@@ -1,5 +1,8 @@
 # Стиль, тесты, контракты и сценарии проверяются до сборки. Только успешный
 # push в main передаёт образ на VPS; pull request ничего не развёртывает.
+# VPS после финала закрыт: публикация на него включается переменной репозитория
+# DEPLOY_VPS=true. Без неё образ собирается и проверяется, но никуда не уходит, и CI
+# остаётся зелёным — от этого зависит автодеплой публичного стенда Render.
 name: pipeline
 
 on:
@@ -95,13 +98,13 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Ключ для SSH-деплоя
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_VPS == 'true'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
       - name: Передать и запустить проверенный образ
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_VPS == 'true'
         env:
           DEPLOY_IMAGE: zero-defect:${{ github.sha }}
         run: |

@@ -25,7 +25,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
 COPY src/ ./src/
-COPY README.md ./
+# README и LICENSE входят в метаданные пакета: без них сборка проекта не проходит.
+COPY README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked
 
 # --- то, что работает -----------------------------------------------------------

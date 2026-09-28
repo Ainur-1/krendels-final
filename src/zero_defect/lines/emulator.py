@@ -691,6 +691,12 @@ class LiveEmulator:
     # без зрителей набирал больше 250 тыс. событий (около 11 тыс. в час на двух линиях), а
     # с ними росли память и время пересборки. Уже запущенные изделия доезжают до конца.
     WATCH_S = 300.0
+    # Потолок событий живой эмуляции за один запуск сервиса. Зритель, который часами держит
+    # линию открытой, иначе растил бы базу без конца: около 11 тыс. событий в час, а на
+    # 22 тыс. событий процесс уже занимает около 180 МБ. 35 тыс. вместе с демонстрационной
+    # историей укладываются примерно в 300 МБ — с запасом до 512 МБ бесплатного стенда.
+    # Запущенные изделия доезжают до конца, новые не запускаются.
+    MAX_EVENTS = 35_000
 
     def __init__(self, ingest, configs) -> None:
         self._ingest = ingest
@@ -702,6 +708,7 @@ class LiveEmulator:
         self._token = datetime.now(UTC).strftime("V%H%M%S")
         self._order = 0
         self._watched: dict[str, float] = {}
+        self._emitted = 0
         self._started = time.time()
 
     def watch(self, line_id: str) -> None:
@@ -849,7 +856,8 @@ class LiveEmulator:
                 if config is None:
                     continue
                 watched = now - self._watched.get(line_id, self._started) <= self.WATCH_S
-                if line.running and watched and now >= line.next_spawn:
+                room = self._emitted < self.MAX_EVENTS
+                if line.running and watched and room and now >= line.next_spawn:
                     if line.planner is None or line.planner.config.version != config.version:
                         line.planner = Planner(
                             config, random.Random(), prefix=f"{self._token}", hold_unclear=True
@@ -868,6 +876,7 @@ class LiveEmulator:
                     line.next_spawn = now + config.takt_s / line.speed
                 while line.queue and line.queue[0][0] <= now:
                     due.append(heapq.heappop(line.queue)[2])
+        self._emitted += len(due)
         if due:
             self._ingest(due)
         return len(due)
