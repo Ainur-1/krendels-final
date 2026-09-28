@@ -22,6 +22,25 @@
 
 **Презентация защиты** — в [`presentation/`](presentation/): [Крендели.pptx](presentation/Крендели.pptx) со встроенным видео демонстрации и [Крендели.pdf](presentation/Крендели.pdf).
 
+<details>
+<summary>English summary</summary>
+
+**Winner of the Space Hackathon 2026 (КосмоХакатон) final: 1st place of 10 teams in the "Space: No Room for Defects" track set by RSC Energia, with the highest score of the track (115.77).** The same team placed 4th of 55 in the qualifying round. Built by a team of three in about 28 hours of development (Friday 19:00 to Saturday 23:30); the service is live at [krendels-final.onrender.com](https://krendels-final.onrender.com/) (free hosting - the first request after idle wakes the container and takes up to a minute).
+
+zero-defect is a traceability and evidence-based defect analysis system for a closed aerospace production line. It merges inspection results from the customer's existing computer-vision model, production operations, operator actions and machine states into a single history of each part, localises the stage where a defect most likely originated, attaches the evidence, the alternatives and the missing information to every conclusion, and leaves the decision to a human. The interface is in Russian because the customer and its production staff are Russian-speaking.
+
+The key observation was about the case itself. It reads like a computer-vision task, but the brief rules that out: the customer already runs a CV model, and its outputs are the input. In an industry where part fitness is signed off by quality control and military acceptance, what is missing is not another probability but proof. So the core is traceability: an analyser signal is not yet a defect, a poor image never becomes "passed", an incoming defect is never blamed on the next operator, and operator error exists only as a human decision.
+
+Five layers. A JSON Schema event contract (9 event types, versions 1.0 and 1.1) is the single source of truth: pydantic models, contract documentation and UI enums are generated from it, and CI fails if anything drifts or a new version breaks existing senders. Ingestion validates every message, quarantines violations, detects duplicates, late events and sequence gaps, and processes items in parallel while keeping per-item order. The analysis layer bounds the origin stage between the last reliable clean inspection and the detecting one, and correlates machine deviations inside the operation window. An append-only ledger stores everything: AES-256-GCM encryption, a hash chain, write protection enforced by the database, and a hybrid post-quantum signature (Ed25519 + ML-DSA-65, FIPS 204) with key and profile rotation that never re-encrypts history. A SCADA-style interface shows the live line graph, time travel to the moment of failure, role-based screens and a block editor for new lines; adapters cover two-way MES exchange with a retry queue, plus 1C, Galaktika ERP, ISA-95 and KOMPAS-3D.
+
+Why post-quantum protection sits in the signature rather than the encryption: a quantum computer weakens AES-256 only quadratically, but it breaks elliptic-curve signatures outright, and a signature forged after the fact would destroy the value of the history as evidence. The hybrid scheme requires both halves to verify, so forging a record means breaking both at once.
+
+Measured, not asserted: all 8 situations from the brief reproduce their reference outcome, written down separately from the input; a load run of 2,187 messages from 6 sources gives an identical state fingerprint with one or four workers, shuffled order and a simulated connection failure, with zero events lost, at about 3,800 messages per second on one machine; profiling cut a full state rebuild on 43k events from 1.4 s to 0.3-0.5 s and problem drill-down in the UI from 2.6 s to 0.7 s; 145 automated tests and four consistency checks run on every push.
+
+Honest limits: the customer's real data is unavailable, so production events come from a line emulator and the CV output format is our assumption, isolated behind an adapter; the 1C, Galaktika, ISA-95 and KOMPAS adapters are verified on sample messages, not live systems; the GOST cryptographic profile has a slot in the record format but needs a certified crypto module chosen by the customer; the economic case is a break-even threshold (1.1% of median scrap-and-rework losses per the APQC benchmark), not a promised saving.
+
+</details>
+
 ---
 
 Решение кейса **«Космос: Без права на брак»** для РКК «Энергия» — интеллектуальный контроль качества деталей в космической отрасли.
